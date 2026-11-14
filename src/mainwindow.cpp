@@ -196,21 +196,6 @@ void MainWindow::initWindow() {
     this->initLogStatusBar();
     this->initCustomUI();
     this->initExtraSignals();
-#ifdef PORYMAP_Z
-    auto *dialogueAction = ui->menuTools->addAction(tr("Dialogue Editor…"));
-    dialogueAction->setObjectName("actionDialogueEditor");
-    connect(dialogueAction, &QAction::triggered, this, [this] {
-        if (!editor || !editor->project) return;
-        if (projectConfig.baseGameVersion != BaseGameVersion::pokeemerald || projectConfig.usePoryScript) {
-            QMessageBox::information(this, tr("Dialogue Editor"),
-                tr("This first version supports pokeemerald assembly dialogue. Poryscript and other games are planned."));
-            return;
-        }
-        // Modal lifetime prevents switching projects while source edits are pending.
-        PorymapZ::DialogueEditor dialogue(editor->project->root, this);
-        dialogue.exec();
-    });
-#endif
     this->initEditor();
     this->initMiscHeapObjects();
     this->initMapList();
@@ -338,6 +323,9 @@ void MainWindow::initCustomUI() {
         {MainTab::Header, "Header"},
         {MainTab::Connections, "Connections"},
         {MainTab::WildPokemon, "Wild Pokemon"},
+#ifdef PORYMAP_Z
+        {MainTab::Dialogue, "Dialogue"},
+#endif
     };
 
     static const QMap<int, QIcon> mainTabIcons = {
@@ -346,6 +334,9 @@ void MainWindow::initCustomUI() {
         {MainTab::Header, QIcon(QStringLiteral(":/icons/application_form_edit.ico"))},
         {MainTab::Connections, QIcon(QStringLiteral(":/icons/connections.ico"))},
         {MainTab::WildPokemon, QIcon(QStringLiteral(":/icons/tall_grass.ico"))},
+#ifdef PORYMAP_Z
+        {MainTab::Dialogue, QIcon(QStringLiteral(":/icons/application_form_edit.ico"))},
+#endif
     };
 
     // Set up the tab bar
@@ -356,6 +347,23 @@ void MainWindow::initCustomUI() {
         ui->mainTabBar->setTabIcon(i, mainTabIcons.value(i));
     }
 
+#ifdef PORYMAP_Z
+    dialogueEditor = new PorymapZ::DialogueEditor(ui->mainStackedWidget);
+    ui->mainStackedWidget->addWidget(dialogueEditor);
+    connect(dialogueEditor, &PorymapZ::DialogueEditor::dirtyChanged, this, [this](bool dirty) {
+        ui->mainTabBar->setTabText(MainTab::Dialogue, dirty ? tr("Dialogue *") : tr("Dialogue"));
+        updateWindowTitle();
+    });
+    connect(dialogueEditor, &PorymapZ::DialogueEditor::sourceSaved, this, [this](const QString &path) {
+        if (!editor || !editor->project) return;
+        // A shared script may be used by several already loaded maps.
+        for (const auto &name : editor->project->mapNames()) {
+            auto *map = editor->project->getMap(name);
+            if (map && map->getScriptsFilepath() == path) map->invalidateScripts();
+        }
+        editor->project->readEventScriptLabels();
+    });
+#endif
     this->unlockableMainTabIcon.load(":/images/unlockable_tab_icon.dat");
 
     // Create map header data widget
@@ -659,7 +667,11 @@ void MainWindow::updateWindowTitle() {
 
     if (editor->map) {
         setWindowTitle(QString("%1%2 - %3")
-            .arg(editor->map->hasUnsavedChanges() ? "* " : "")
+            .arg((editor->map->hasUnsavedChanges()
+#ifdef PORYMAP_Z
+                || (dialogueEditor && dialogueEditor->hasUnsavedChanges())
+#endif
+            ) ? "* " : "")
             .arg(editor->map->name())
             .arg(projectName)
         );
@@ -1098,6 +1110,9 @@ void MainWindow::on_action_Close_Project_triggered() {
 }
 
 void MainWindow::unsetMap() {
+#ifdef PORYMAP_Z
+    if (dialogueEditor) dialogueEditor->setScene({}, {}, {});
+#endif
     this->editor->unsetMap();
     setLayoutOnlyMode(true);
 }
@@ -1184,6 +1199,9 @@ bool MainWindow::userSetMap(const QString &mapName) {
     if (prevItem == mapName)
         return true; // Already set
 
+#ifdef PORYMAP_Z
+    if (dialogueEditor && !dialogueEditor->confirmChanges()) return false;
+#endif
     if (!setMap(mapName)) {
         RecentErrorMessage::show(QString("There was an error opening map '%1'.").arg(mapName), this);
         return false;
@@ -1198,6 +1216,9 @@ bool MainWindow::setMap(const QString &mapName) {
         return false;
     }
 
+#ifdef PORYMAP_Z
+    if (dialogueEditor && !dialogueEditor->confirmChanges()) return false;
+#endif
     logInfo(QString("Setting map to '%1'").arg(mapName));
     if (!editor->setMap(mapName)) {
         logWarn(QString("Failed to set map to '%1'").arg(mapName));
@@ -1226,6 +1247,10 @@ bool MainWindow::setMap(const QString &mapName) {
     prefab.updatePrefabUi(editor->layout);
     updateTilesetEditor();
 
+#ifdef PORYMAP_Z
+    dialogueEditor->setScene(editor->project->root, editor->map->name(), editor->map->getScriptsFilepath(),
+        projectConfig.baseGameVersion == BaseGameVersion::pokeemerald && !projectConfig.usePoryScript);
+#endif
     emit mapOpened(editor->map);
 
     return true;
@@ -1237,6 +1262,12 @@ void MainWindow::setLayoutOnlyMode(bool layoutOnly) {
     bool mapEditingEnabled = !layoutOnly;
     ui->mainTabBar->setTabEnabled(MainTab::Events, mapEditingEnabled);
     ui->mainTabBar->setTabEnabled(MainTab::Header, mapEditingEnabled);
+#ifdef PORYMAP_Z
+    ui->mainTabBar->setTabEnabled(MainTab::Dialogue, mapEditingEnabled);
+    ui->mainTabBar->setTabToolTip(MainTab::Dialogue, mapEditingEnabled ? QString() : tr("Open a map to edit its dialogue and scripts."));
+    if (layoutOnly && ui->mainTabBar->currentIndex() == MainTab::Dialogue)
+        on_mainTabBar_tabBarClicked(MainTab::Map);
+#endif
     ui->mainTabBar->setTabEnabled(MainTab::Connections, mapEditingEnabled);
     ui->mainTabBar->setTabEnabled(MainTab::WildPokemon, mapEditingEnabled && this->editor->project->wildEncountersLoaded);
 
@@ -1264,6 +1295,9 @@ bool MainWindow::userSetLayout(const QString &layoutId) {
     if (prevItem == layoutId)
         return true; // Already set
 
+#ifdef PORYMAP_Z
+    if (dialogueEditor && !dialogueEditor->confirmChanges()) return false;
+#endif
     if (!setLayout(layoutId)) {
         RecentErrorMessage::show(QString("There was an error opening layout '%1'.").arg(layoutId), this);
         return false;
@@ -1278,6 +1312,9 @@ bool MainWindow::userSetLayout(const QString &layoutId) {
 }
 
 bool MainWindow::setLayout(const QString &layoutId) {
+#ifdef PORYMAP_Z
+    if (dialogueEditor && !dialogueEditor->confirmChanges()) return false;
+#endif
     // Prefer logging the name of the layout as displayed in the map list.
     QString layoutName = this->editor->project ? this->editor->project->getLayoutName(layoutId) : QString();
     logInfo(QString("Setting layout to '%1'").arg(layoutName.isEmpty() ? layoutId : layoutName));
@@ -1545,6 +1582,9 @@ bool MainWindow::setProjectUI() {
 }
 
 void MainWindow::clearProjectUI() {
+#ifdef PORYMAP_Z
+    if (dialogueEditor) dialogueEditor->setScene({}, {}, {});
+#endif
     // Clear project comboboxes
     const QSignalBlocker b_PrimaryTileset(ui->comboBox_PrimaryTileset);
     ui->comboBox_PrimaryTileset->clear();
@@ -2020,6 +2060,9 @@ void MainWindow::on_action_Save_triggered() {
 }
 
 bool MainWindow::save(bool currentOnly) {
+#ifdef PORYMAP_Z
+    if (dialogueEditor && !dialogueEditor->saveChanges()) return false;
+#endif
     bool success = currentOnly ? this->editor->saveCurrent() : this->editor->saveAll();
     if (!success) {
         RecentErrorMessage::show(QStringLiteral("Failed to save some project changes."), this);
@@ -2294,6 +2337,9 @@ void MainWindow::on_mainTabBar_tabBarClicked(int index)
         {MainTab::Header, 1},
         {MainTab::Connections, 2},
         {MainTab::WildPokemon, 3},
+#ifdef PORYMAP_Z
+        {MainTab::Dialogue, 4},
+#endif
     };
     ui->mainStackedWidget->setCurrentIndex(tabIndexToStackIndex.value(index));
 
@@ -3300,6 +3346,9 @@ bool MainWindow::closeProject() {
 
     if (!closeSupplementaryWindows())
         return false;
+#ifdef PORYMAP_Z
+    if (dialogueEditor && !dialogueEditor->confirmChanges()) return false;
+#endif
 
     if (this->editor->project->hasUnsavedChanges()) {
         auto reply = SaveChangesMessage::show(QStringLiteral("The project"), this);

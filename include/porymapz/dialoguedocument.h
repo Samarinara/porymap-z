@@ -21,10 +21,13 @@ public:
 
     bool load(const QString &path, QString *error);
     bool save(int entryIndex, const QString &text, QString *error);
+    QString sourceText() const;
+    bool saveSource(const QString &text, QString *error);
     const QVector<Entry> &entries() const { return m_entries; }
 
 private:
     void parse();
+    bool writeSource(const QByteArray &updated, QString *error);
     QString m_path;
     QByteArray m_source;
     QVector<Entry> m_entries;

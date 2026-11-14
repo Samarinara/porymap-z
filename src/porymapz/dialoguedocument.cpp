@@ -93,17 +93,6 @@ bool DialogueDocument::save(int entryIndex, const QString &text, QString *error)
             return false;
         }
     }
-    QFile existing(m_path);
-    if (!existing.open(QIODevice::ReadOnly)) {
-        *error = existing.errorString();
-        return false;
-    }
-    const auto disk = existing.readAll();
-    if (existing.error() != QFileDevice::NoError || disk != m_source) {
-        *error = QStringLiteral("The file changed outside the dialogue editor. Copy your edits, then reload the file before saving.");
-        return false;
-    }
-    existing.close();
     const auto &entry = m_entries.at(entryIndex);
     QByteArray updated = m_source;
     const QByteArray newline = m_source.contains("\r\n") ? "\r\n" : "\n";
@@ -119,6 +108,38 @@ bool DialogueDocument::save(int entryIndex, const QString &text, QString *error)
         // Empty operands preserve comments/directives when the user shortens a block.
         updated.replace(literal.offset, literal.length, i < lines.size() ? lines.at(i).toUtf8() : QByteArray());
     }
+    return writeSource(updated, error);
+}
+
+QString DialogueDocument::sourceText() const {
+    return QString::fromUtf8(m_source);
+}
+
+bool DialogueDocument::saveSource(const QString &text, QString *error) {
+    if (text.contains(QChar::Null)) {
+        *error = QStringLiteral("Scripts cannot contain NUL characters.");
+        return false;
+    }
+    QString normalized = text;
+    normalized.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    if (m_source.contains("\r\n")) normalized.replace(QStringLiteral("\n"), QStringLiteral("\r\n"));
+    QByteArray updated = normalized.toUtf8();
+    if (m_source.startsWith("\xEF\xBB\xBF")) updated.prepend("\xEF\xBB\xBF");
+    return writeSource(updated, error);
+}
+
+bool DialogueDocument::writeSource(const QByteArray &updated, QString *error) {
+    QFile existing(m_path);
+    if (!existing.open(QIODevice::ReadOnly)) {
+        *error = existing.errorString();
+        return false;
+    }
+    const auto disk = existing.readAll();
+    if (existing.error() != QFileDevice::NoError || disk != m_source) {
+        *error = QStringLiteral("The file changed outside the dialogue editor. Copy your edits, then reload the file before saving.");
+        return false;
+    }
+    existing.close();
     QSaveFile output(m_path);
     output.setDirectWriteFallback(false);
     if (!output.open(QIODevice::WriteOnly) || output.write(updated) != updated.size() || !output.commit()) {
