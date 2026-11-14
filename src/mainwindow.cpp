@@ -579,14 +579,17 @@ void MainWindow::initMapList() {
 
     ui->mapListContainer->setCornerWidget(navigationFrame, Qt::TopLeftCorner);
 
-    // Can't seem to get mapListContainer to update the size hint appropriately for
-    // the new corner widgets. The default size hint is too small, and the tabs will elide.
-    // For now we set an explicit minimum to fit both the tabs and buttons, and we make
-    // the buttons as small as they can reasonably be to maximize space for the tabs.
-    ui->mapListContainer->setMinimumWidth(285);
     buttonAdd->setFixedWidth(25);
     backArrow->setFixedWidth(15);
     forwardArrow->setFixedWidth(15);
+
+    // QTabWidget's hint omits corner widgets. Include their actual font-scaled
+    // widths so the map list tabs stay visible, while leaving room for the map.
+    const int tabsWidth = ui->mapListContainer->tabBar()->sizeHint().width();
+    const int cornerWidth = navigationFrame->sizeHint().width() + buttonFrame->sizeHint().width();
+    const QScreen *screen = QGuiApplication::primaryScreen();
+    const int availableWidth = screen ? screen->availableGeometry().width() : 1200;
+    ui->mapListContainer->setMinimumWidth(qMax(285, qMin(tabsWidth + cornerWidth + 12, availableWidth / 3)));
 
     // Connect tool bars to lists
     ui->mapListToolBar_Groups->setList(ui->mapList);

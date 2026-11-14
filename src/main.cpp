@@ -9,7 +9,6 @@ int main(int argc, char *argv[])
     QCoreApplication::setAttribute(Qt::AA_UseStyleSheetPropagationInWidgetStyles, true);
 
     QApplication a(argc, argv);
-    a.setStyle("fusion");
 
     porysplash = new PorymapLoadingScreen;
 

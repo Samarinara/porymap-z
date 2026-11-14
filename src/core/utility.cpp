@@ -61,7 +61,18 @@ QString Util::toStylesheetString(const QFont &font) {
 
     // Font weight
     if (font.weight() >= 0) {
-        s.append(QString(" font-weight: %1;").arg(font.weight()));
+        // Qt 5 stores font weights on a 0-99 scale, while style sheets use CSS's
+        // 100-900 scale. Passing Qt's Normal (50) directly makes text ultra thin.
+        const int weight = font.weight();
+        const int cssWeight = weight <= QFont::Thin ? 100
+                            : weight <= QFont::ExtraLight ? 200
+                            : weight <= QFont::Light ? 300
+                            : weight <= QFont::Normal ? 400
+                            : weight <= QFont::Medium ? 500
+                            : weight <= QFont::DemiBold ? 600
+                            : weight <= QFont::Bold ? 700
+                            : weight <= QFont::ExtraBold ? 800 : 900;
+        s.append(QString(" font-weight: %1;").arg(cssWeight));
     }
 
     // Text decoration
