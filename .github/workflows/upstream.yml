@@ -1,0 +1,33 @@
+name: Check Porymap upstream
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 9 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  check-upstream:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Report unmerged upstream commits
+        shell: bash
+        run: |
+          git fetch --no-tags https://github.com/huderlem/porymap.git master
+          count=$(git rev-list --count HEAD..FETCH_HEAD)
+          {
+            echo '# Porymap upstream status'
+            echo
+            echo "Upstream commits not yet merged: $count"
+            echo
+            echo '```text'
+            git log --oneline --max-count=30 HEAD..FETCH_HEAD
+            echo '```'
+            echo
+            echo 'Follow docs/porymap-z/upstream.md to review and merge updates.'
+          } >> "$GITHUB_STEP_SUMMARY"

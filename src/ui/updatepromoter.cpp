@@ -64,7 +64,11 @@ void UpdatePromoter::checkForUpdates() {
     // We could use the URL ".../releases/latest" to retrieve less data, but this would run into problems if the
     // most recent item on the releases page is not actually a new release (like the static windows build).
     // By getting all releases we can also present a multi-version changelog of all changes since the host release.
+#ifdef PORYMAP_Z
+    static const QUrl url("https://api.github.com/repos/Samarinara/porymap-z/releases");
+#else
     static const QUrl url("https://api.github.com/repos/huderlem/porymap/releases");
+#endif
     this->get(url);
 }
 

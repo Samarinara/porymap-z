@@ -1,36 +1,51 @@
-# Porymap
+# Porymap-Z
 
-[![Actions Status](https://github.com/huderlem/porymap/workflows/Build%20Porymap/badge.svg)](https://github.com/huderlem/porymap/actions)
+[![Build Porymap-Z](https://github.com/Samarinara/porymap-z/actions/workflows/main.yml/badge.svg)](https://github.com/Samarinara/porymap-z/actions/workflows/main.yml)
 
-A map editor for the Pokémon generation 3 decompilation projects ([pokeruby][pokeruby], [pokeemerald][pokeemerald], and [pokefirered][pokefirered]).
+Porymap-Z is a fork of [Porymap](https://github.com/huderlem/porymap) that is growing from a map editor into an integrated game editor for Pokémon generation 3 decompilation projects. It retains the existing game runtime and Porymap's map, event, tileset, region map, and wild encounter tools.
 
-To get started, view the full online guide here: https://huderlem.github.io/porymap/
+**First milestone:** assembly dialogue editing for **pokeemerald**. Open a project, then choose **Tools → Dialogue Editor…** to browse dialogue files and labels, search text, and save edits directly to the game's source. See the [dialogue guide](docs/porymap-z/dialogue.md) for supported syntax and limitations.
 
-View the [Changelog][changelog] to see what's new.
+Trainer teams, trainer battles, and further game systems are future milestones, described in the [roadmap](docs/porymap-z/roadmap.md). This fork does not yet provide a standalone runtime, battle editor, or Poryscript dialogue editor.
 
-## Download
+## Build
 
-Windows and macOS users can download Porymap below to start using it immediately. Older versions of Porymap may be downloaded from the [Releases][releases] page.
+Use Qt 5.14.2 or newer (including Qt 6), a C++17 compiler, and make. Qt Widgets is required; QML, Charts, and Network enable additional upstream features. See [INSTALL.md](INSTALL.md) for platform prerequisites; use the fork URL and build commands below in place of its upstream examples.
 
- - [Download Porymap for Windows](https://github.com/huderlem/porymap/releases/latest/download/porymap-windows.zip).
- - [Download Porymap for macOS latest (arm)](https://github.com/huderlem/porymap/releases/latest/download/porymap-macos-latest.zip).
- - [Download Porymap for macOS 15 (intel)](https://github.com/huderlem/porymap/releases/latest/download/porymap-macos-15-intel.zip).
+```sh
+git clone https://github.com/Samarinara/porymap-z.git
+cd porymap-z
+mkdir -p build/app
+cd build/app
+qmake ../../porymap-z.pro
+make -j4
+./porymap-z
+```
 
-Linux users must compile Porymap from source.
+On macOS, run `porymap-z.app/Contents/MacOS/porymap-z` instead. Build with `porymap.pro` to retain the upstream application target; fork features are enabled by `porymap-z.pro`.
 
-<details>
-    <summary><i>Pre-compiled builds for Linux...</i></summary>
+There are no Porymap-Z binary releases yet. The [original Porymap releases](https://github.com/huderlem/porymap/releases) do not contain these additions.
 
->   If you are a Linux user and you do not want to compile Porymap from source, you may find Porymap on an external package repository like Flathub or AUR.
->   Builds installed through an external package manager are not explicitly maintained by Porymap and may be out of date.
-</details>
+## Tests
 
-Read [INSTALL.md](INSTALL.md) for instructions on how to compile Porymap from source.
+```sh
+mkdir -p build/dialogue-tests
+cd build/dialogue-tests
+qmake ../../tests/porymapz/dialogue.pro
+make -j2
+./tst_dialogue
+cd ..
+mkdir -p dialogue-ui-tests
+cd dialogue-ui-tests
+qmake ../../tests/porymapz/editor.pro
+make -j2
+QT_QPA_PLATFORM=offscreen ./tst_dialogueeditor
+```
 
-![Porymap Preview](docsrc/manual/images/introduction/porymap-loaded-project.png)
+For an optional round-trip test against a real pokeemerald checkout, run `PORYMAP_Z_TEST_PROJECT=/path/to/pokeemerald ./tst_dialogue` from the dialogue test build directory. This test edits temporary copies and leaves that checkout untouched.
 
-[pokeruby]: https://github.com/pret/pokeruby
-[pokeemerald]: https://github.com/pret/pokeemerald
-[pokefirered]: https://github.com/pret/pokefirered
-[changelog]: https://github.com/huderlem/porymap/blob/master/CHANGELOG.md
-[releases]: https://github.com/huderlem/porymap/releases
+## Upstream and licensing
+
+Porymap's history and [license](LICENSE.md) are retained. New editor code lives in `src/porymapz` and `include/porymapz`, with a separate qmake entry point to limit upstream merge conflicts. Follow the [upstream maintenance guide](docs/porymap-z/upstream.md) to integrate changes. A weekly GitHub Actions check reports upstream commits; integration is reviewed and tested before merging.
+
+The [Porymap manual](https://huderlem.github.io/porymap/) and [upstream changelog](CHANGELOG.md) cover inherited functionality. Fork-specific behavior is documented under [docs/porymap-z](docs/porymap-z/).

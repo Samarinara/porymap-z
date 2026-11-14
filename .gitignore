@@ -17,3 +17,8 @@ moc_*.h
 moc_*.cpp
 qrc_*.cpp
 .qtc_clangd
+
+# Porymap-Z build outputs
+/porymap-z
+porymap-z.app*
+porymap-z.pro.user

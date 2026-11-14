@@ -1,4 +1,7 @@
 #include "mainwindow.h"
+#ifdef PORYMAP_Z
+#include "porymapz/dialogueeditor.h"
+#endif
 #include "ui_mainwindow.h"
 #include "project.h"
 #include "log.h"
@@ -66,7 +69,11 @@ MainWindow::MainWindow(QWidget *parent) :
     isProgrammaticEventTabChange(false)
 {
     QCoreApplication::setOrganizationName("pret");
+#ifdef PORYMAP_Z
+    QCoreApplication::setApplicationName("porymap-z");
+#else
     QCoreApplication::setApplicationName("porymap");
+#endif
     QCoreApplication::setApplicationVersion(PORYMAP_VERSION);
     QApplication::setApplicationDisplayName(QApplication::applicationName());
     QApplication::setWindowIcon(QIcon(":/icons/porymap-icon-2.ico"));
@@ -189,6 +196,21 @@ void MainWindow::initWindow() {
     this->initLogStatusBar();
     this->initCustomUI();
     this->initExtraSignals();
+#ifdef PORYMAP_Z
+    auto *dialogueAction = ui->menuTools->addAction(tr("Dialogue Editor…"));
+    dialogueAction->setObjectName("actionDialogueEditor");
+    connect(dialogueAction, &QAction::triggered, this, [this] {
+        if (!editor || !editor->project) return;
+        if (projectConfig.baseGameVersion != BaseGameVersion::pokeemerald || projectConfig.usePoryScript) {
+            QMessageBox::information(this, tr("Dialogue Editor"),
+                tr("This first version supports pokeemerald assembly dialogue. Poryscript and other games are planned."));
+            return;
+        }
+        // Modal lifetime prevents switching projects while source edits are pending.
+        PorymapZ::DialogueEditor dialogue(editor->project->root, this);
+        dialogue.exec();
+    });
+#endif
     this->initEditor();
     this->initMiscHeapObjects();
     this->initMapList();

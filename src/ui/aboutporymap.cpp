@@ -6,6 +6,11 @@ AboutPorymap::AboutPorymap(QWidget *parent) :
     ui(new Ui::AboutPorymap)
 {
     ui->setupUi(this);
+#ifdef PORYMAP_Z
+    setWindowTitle(tr("About Porymap-Z"));
+    ui->label_Title->setText("Porymap-Z");
+    ui->label_Description->setText(tr("Game editor fork of Porymap. Dialogue editing for pokeemerald."));
+#endif
     setAttribute(Qt::WA_DeleteOnClose);
 
     // Set font in the stylesheet as opposed to the form so that it won't be overwritten by custom user fonts.
