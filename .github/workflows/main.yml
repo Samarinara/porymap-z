@@ -50,6 +50,10 @@ jobs:
           qmake ../../tests/porymapz/editor.pro
           make -j2
           QT_QPA_PLATFORM=offscreen ./tst_dialogueeditor
+          cd ../..
+          qmake CONFIG+=porymap_z_tests porymap-z.pro
+          make -j8
+          QT_QPA_PLATFORM=offscreen ./tst_mainwindow
 
   build-macos:
     strategy:

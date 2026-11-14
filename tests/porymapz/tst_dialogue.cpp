@@ -97,6 +97,24 @@ private slots:
         QVERIFY(!doc.save(0, "Mine$", &error));
         QVERIFY(!QFile::exists(path));
     }
+    void scriptSourcePreservesFormattingAndConflicts() {
+        QTemporaryDir dir;
+        const auto path = dir.filePath("scripts.inc");
+        const auto source = QByteArray::fromHex("efbbbf") + "Enter::\r\n\tsetflag FLAG_OLD\r\n\tend";
+        write(path, source);
+        DialogueDocument doc;
+        QString error;
+        QVERIFY(doc.load(path, &error));
+        auto changed = doc.sourceText();
+        changed.replace("FLAG_OLD", "FLAG_NEW");
+        QVERIFY(doc.saveSource(changed, &error));
+        auto expected = source;
+        expected.replace("FLAG_OLD", "FLAG_NEW");
+        QCOMPARE(read(path), expected);
+        write(path, expected + "\r\n@ External edit");
+        QVERIFY(!doc.saveSource("Replacement", &error));
+        QCOMPARE(read(path), expected + "\r\n@ External edit");
+    }
     void pokeemeraldCorpus() {
         const QString root = qEnvironmentVariable("PORYMAP_Z_TEST_PROJECT");
         if (root.isEmpty()) QSKIP("Set PORYMAP_Z_TEST_PROJECT to round-trip a real pokeemerald data directory.");

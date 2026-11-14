@@ -4,7 +4,7 @@
 
 Porymap-Z is a fork of [Porymap](https://github.com/huderlem/porymap) that is growing from a map editor into an integrated game editor for Pokémon generation 3 decompilation projects. It retains the existing game runtime and Porymap's map, event, tileset, region map, and wild encounter tools.
 
-**First milestone:** assembly dialogue editing for **pokeemerald**. Open a project, then choose **Tools → Dialogue Editor…** to browse dialogue files and labels, search text, and save edits directly to the game's source. See the [dialogue guide](docs/porymap-z/dialogue.md) for supported syntax and limitations.
+**First milestone:** assembly dialogue editing for **pokeemerald**. Open a map and choose the **Dialogue** main tab to edit its dialogue by label or its full event scripts. The default **Current scene** scope follows map selection, including shared scripts; **Whole project** lets you browse other dialogue. Save directly or use Save/Ctrl+S. See the [dialogue guide](docs/porymap-z/dialogue.md) for supported syntax and limitations.
 
 Trainer teams, trainer battles, and further game systems are future milestones, described in the [roadmap](docs/porymap-z/roadmap.md). This fork does not yet provide a standalone runtime, battle editor, or Poryscript dialogue editor.
 
@@ -40,6 +40,17 @@ cd dialogue-ui-tests
 qmake ../../tests/porymapz/editor.pro
 make -j2
 QT_QPA_PLATFORM=offscreen ./tst_dialogueeditor
+```
+
+To test the main-window tab integration as well, run from the repository root:
+
+```sh
+cd build/app
+qmake CONFIG+=porymap_z_tests ../../porymap-z.pro
+make -j4
+QT_QPA_PLATFORM=offscreen ./tst_mainwindow
+qmake ../../porymap-z.pro
+make -j4
 ```
 
 For an optional round-trip test against a real pokeemerald checkout, run `PORYMAP_Z_TEST_PROJECT=/path/to/pokeemerald ./tst_dialogue` from the dialogue test build directory. This test edits temporary copies and leaves that checkout untouched.

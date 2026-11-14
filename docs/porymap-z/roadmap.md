@@ -4,7 +4,7 @@ Porymap-Z expands the existing Qt editor while retaining the game project's runt
 
 ## Milestone 1: dialogue (implemented)
 
-Browse standard pokeemerald assembly dialogue, search within files, edit text by label, preserve surrounding source, and refuse saves when external edits are detected. Source preservation and save failures have automated regression coverage.
+Edit the active map from a Dialogue main tab: dialogue by label or the complete scene script source, including shared scripts. Browse other project dialogue with an explicit scope switch. Save with the main Save action, preserve surrounding source, and refuse saves when external edits are detected. Source preservation and save failures have automated regression coverage.
 
 ## Milestone 2: trainers and battles (planned)
 

@@ -42,6 +42,10 @@
 
 
 
+#ifdef PORYMAP_Z
+namespace PorymapZ { class DialogueEditor; }
+#endif
+
 namespace Ui {
 class MainWindow;
 }
@@ -356,6 +360,9 @@ private:
     bool ignoreNavigationRecords = false;
 
     UnlockableIcon unlockableMainTabIcon;
+#ifdef PORYMAP_Z
+    PorymapZ::DialogueEditor *dialogueEditor = nullptr;
+#endif
 
     QAction *copyAction = nullptr;
     QAction *pasteAction = nullptr;
@@ -484,6 +491,9 @@ struct MainTab {
         Header,
         Connections,
         WildPokemon,
+#ifdef PORYMAP_Z
+        Dialogue,
+#endif
     };
 };
 
