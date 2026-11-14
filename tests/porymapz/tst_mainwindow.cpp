@@ -3,9 +3,11 @@
 #include <QTabBar>
 #include <QTemporaryDir>
 #include <QFile>
+#include <QDir>
 #include <QPlainTextEdit>
 #include "mainwindow.h"
 #include "porymapz/dialogueeditor.h"
+#include "porymapz/battleeditor.h"
 
 class MainWindowTest : public QObject {
     Q_OBJECT
@@ -22,6 +24,12 @@ private slots:
         QCOMPARE(tabs->tabText(MainTab::Dialogue), QString("Dialogue"));
         QCOMPARE(pages->widget(4), static_cast<QWidget *>(dialogue));
         QVERIFY(!dialogue->isWindow());
+        auto *battle = window.findChild<PorymapZ::BattleEditor *>();
+        QVERIFY(battle);
+        QCOMPARE(tabs->tabText(MainTab::Battle), QString("Battle"));
+        QCOMPARE(pages->widget(5), static_cast<QWidget *>(battle));
+        QVERIFY(QMetaObject::invokeMethod(&window, "on_mainTabBar_tabBarClicked", Q_ARG(int, int(MainTab::Battle))));
+        QCOMPARE(pages->currentWidget(), static_cast<QWidget *>(battle));
         QVERIFY(QMetaObject::invokeMethod(&window, "on_mainTabBar_tabBarClicked", Q_ARG(int, int(MainTab::Dialogue))));
         QCOMPARE(pages->currentWidget(), static_cast<QWidget *>(dialogue));
         QVERIFY(QMetaObject::invokeMethod(&window, "on_mainTabBar_tabBarClicked", Q_ARG(int, int(MainTab::Header))));
@@ -42,6 +50,17 @@ private slots:
         QCOMPARE(tabs->tabText(MainTab::Dialogue), QString("Dialogue"));
         QVERIFY(file.open(QIODevice::ReadOnly));
         QVERIFY(file.readAll().contains("Saved scene text$"));
+        QVERIFY(QDir(config.path()).mkpath("src/data"));
+        QFile trainers(config.filePath("src/data/trainers.h"));
+        QVERIFY(trainers.open(QIODevice::WriteOnly));
+        trainers.write("const struct Trainer gTrainers[] = { [TRAINER_TEST] = {.doubleBattle = FALSE}, };\n");
+        trainers.close();
+        QVERIFY(battle->setScene(config.path(), "Scene", path));
+        auto *battleSource = battle->findChild<QPlainTextEdit *>("battleSource");
+        battleSource->setPlainText(QString(battleSource->toPlainText()).replace("FALSE", "TRUE"));
+        QCOMPARE(tabs->tabText(MainTab::Battle), QString("Battle *"));
+        QVERIFY(battle->saveChanges());
+        QCOMPARE(tabs->tabText(MainTab::Battle), QString("Battle"));
     }
 };
 QTEST_MAIN(MainWindowTest)

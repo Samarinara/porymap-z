@@ -3,9 +3,13 @@ include(porymap.pro)
 TARGET = porymap-z
 QMAKE_TARGET_BUNDLE_PREFIX = com.samarinara
 DEFINES += PORYMAP_Z
-SOURCES += src/porymapz/dialoguedocument.cpp \
+SOURCES += src/porymapz/battledocument.cpp \
+           src/porymapz/battleeditor.cpp \
+           src/porymapz/dialoguedocument.cpp \
            src/porymapz/dialogueeditor.cpp
-HEADERS += include/porymapz/dialoguedocument.h \
+HEADERS += include/porymapz/battledocument.h \
+           include/porymapz/battleeditor.h \
+           include/porymapz/dialoguedocument.h \
            include/porymapz/dialogueeditor.h
 
 # Reuse the application build to verify the main tab integration.

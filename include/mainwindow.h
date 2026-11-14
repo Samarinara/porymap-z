@@ -43,7 +43,7 @@
 
 
 #ifdef PORYMAP_Z
-namespace PorymapZ { class DialogueEditor; }
+namespace PorymapZ { class DialogueEditor; class BattleEditor; }
 #endif
 
 namespace Ui {
@@ -362,6 +362,7 @@ private:
     UnlockableIcon unlockableMainTabIcon;
 #ifdef PORYMAP_Z
     PorymapZ::DialogueEditor *dialogueEditor = nullptr;
+    PorymapZ::BattleEditor *battleEditor = nullptr;
 #endif
 
     QAction *copyAction = nullptr;
@@ -493,6 +494,7 @@ struct MainTab {
         WildPokemon,
 #ifdef PORYMAP_Z
         Dialogue,
+        Battle,
 #endif
     };
 };

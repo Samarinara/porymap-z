@@ -6,7 +6,7 @@ Porymap-Z is a fork of [Porymap](https://github.com/huderlem/porymap) that is gr
 
 **First milestone:** assembly dialogue editing for **pokeemerald**. Open a map and choose the **Dialogue** main tab to edit its dialogue by label or its full event scripts. The default **Current scene** scope follows map selection, including shared scripts; **Whole project** lets you browse other dialogue. Save directly or use Save/Ctrl+S. See the [dialogue guide](docs/porymap-z/dialogue.md) for supported syntax and limitations.
 
-Trainer teams, trainer battles, and further game systems are future milestones, described in the [roadmap](docs/porymap-z/roadmap.md). This fork does not yet provide a standalone runtime, battle editor, or Poryscript dialogue editor.
+**Battle editing:** choose the **Battle** main tab to edit trainer settings, Pokémon parties, trainer IDs, and scene battle scripts. It includes searchable structured fields, project-constant suggestions, party navigation, adding Pokémon, duplication/deletion, and full source access. See the [battle guide](docs/porymap-z/battles.md). Further game systems are described in the [roadmap](docs/porymap-z/roadmap.md); a standalone runtime and Poryscript editing remain outside the current implementation.
 
 ## Build
 
@@ -40,6 +40,12 @@ cd dialogue-ui-tests
 qmake ../../tests/porymapz/editor.pro
 make -j2
 QT_QPA_PLATFORM=offscreen ./tst_dialogueeditor
+cd ..
+mkdir -p battle-tests
+cd battle-tests
+qmake ../../tests/porymapz/battle.pro
+make -j2
+QT_QPA_PLATFORM=offscreen ./tst_battle
 ```
 
 To test the main-window tab integration as well, run from the repository root:
