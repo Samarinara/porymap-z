@@ -184,8 +184,8 @@ bool BattleEditor::setScene(const QString &root, const QString &map, const QStri
     if (m_files->count() && m_root == canonical && m_files->isEnabled() == (!canonical.isEmpty() && !map.isEmpty() && supported)) return true;
     m_root = canonical;
     auto *delegate = static_cast<BattleValueDelegate *>(m_fields->itemDelegate());
-    delegate->constants = {"TRUE", "FALSE"};
-    for (const QString &name : {"species", "moves", "items", "trainers", "trainer_types", "battle_ai"}) {
+    delegate->constants = QStringList{"TRUE", "FALSE"};
+    for (const QString &name : QStringList{"species", "moves", "items", "trainers", "trainer_types", "battle_ai"}) {
         QFile constants(m_root + "/include/constants/" + name + ".h");
         if (!m_root.isEmpty() && constants.open(QIODevice::ReadOnly)) {
             const auto source = QString::fromUtf8(constants.readAll());
