@@ -37,7 +37,7 @@ jobs:
       - name: Compile
         run: make -j8
 
-      - name: Test dialogue source editing
+      - name: Test dialogue and battle editing
         run: |
           mkdir -p build/dialogue-tests
           cd build/dialogue-tests
@@ -50,6 +50,12 @@ jobs:
           qmake ../../tests/porymapz/editor.pro
           make -j2
           QT_QPA_PLATFORM=offscreen ./tst_dialogueeditor
+          cd ..
+          mkdir -p battle-tests
+          cd battle-tests
+          qmake ../../tests/porymapz/battle.pro
+          make -j2
+          QT_QPA_PLATFORM=offscreen ./tst_battle
           cd ../..
           qmake CONFIG+=porymap_z_tests porymap-z.pro
           make -j8

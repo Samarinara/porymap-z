@@ -21,9 +21,11 @@ public:
     bool duplicate(int node, const QString &name = {});
     bool remove(int node);
     bool appendPokemon(int party);
+    bool canResize(int node) const;
 private:
     int addNode(const QString &name, int start, int valueStart, int end, int parent);
     int matching(int start) const;
+    bool isPokemon(int node) const;
     QString m_source, m_mask, m_commentsMasked;
     QVector<Node> m_nodes;
     QVector<int> m_records;

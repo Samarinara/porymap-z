@@ -21,6 +21,8 @@ public:
     bool confirmChanges();
     bool saveChanges();
     bool hasUnsavedChanges() const;
+protected:
+    bool event(QEvent *event) override;
 signals:
     void dirtyChanged(bool dirty);
     void sourceSaved(const QString &path);
@@ -31,6 +33,13 @@ private:
     void addFields(int node, QTreeWidgetItem *parent);
     void setDirty(bool dirty);
     void mutate(bool remove);
+    void filterRecords();
+    void updateActions();
+    void updateSummaries();
+    void syncSource();
+    int selectedTarget() const;
+    QString partyReference() const;
+    QString baseline() const;
     bool editable(const QString &path) const;
     QString m_root;
     QString m_path;
@@ -43,9 +52,15 @@ private:
     QLineEdit *m_search;
     QTreeWidget *m_fields;
     QPlainTextEdit *m_source;
-    QTabWidget *m_views;
+    QTabWidget *m_views = nullptr;
     QLabel *m_status;
     QPushButton *m_save;
+    QPushButton *m_duplicate;
+    QPushButton *m_remove;
+    QPushButton *m_addPokemon;
+    QPushButton *m_goParty;
+    QWidget *m_fileControls;
+    bool m_loaded = false;
     DialogueEditor *m_scripts;
 };
 }

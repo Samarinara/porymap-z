@@ -93,15 +93,16 @@ bool BattleDocument::setValue(int index, const QString &value) {
     bool valid;
     const auto mask = maskSource(value, true, &valid);
     if (!valid) return false;
-    int braces = 0, parens = 0, brackets = 0;
+    QString delimiters;
     for (const auto c : mask) {
-        if (c == '{') ++braces; else if (c == '}') --braces;
-        else if (c == '(') ++parens; else if (c == ')') --parens;
-        else if (c == '[') ++brackets; else if (c == ']') --brackets;
-        else if ((c == ',' && !braces && !parens && !brackets) || c == ';' || c == '#') return false;
-        if (braces < 0 || parens < 0 || brackets < 0) return false;
+        if (c == '{' || c == '(' || c == '[') delimiters.append(c);
+        else if (c == '}' || c == ')' || c == ']') {
+            const QChar expected = c == '}' ? '{' : c == ')' ? '(' : '[';
+            if (delimiters.isEmpty() || delimiters.back() != expected) return false;
+            delimiters.chop(1);
+        } else if ((c == ',' && delimiters.isEmpty()) || c == ';' || c == '#') return false;
     }
-    if (braces || parens || brackets) return false;
+    if (!delimiters.isEmpty()) return false;
     const auto node = m_nodes[index];
     QString updated = m_source;
     updated.replace(node.valueStart, node.end-node.valueStart, value);
@@ -114,13 +115,15 @@ bool BattleDocument::setValue(int index, const QString &value) {
 bool BattleDocument::duplicate(int index, const QString &name) {
     if (index < 0 || index >= m_nodes.size()) return false;
     const auto node = m_nodes[index];
+    if ((!m_records.contains(index) && !isPokemon(index)) || !canResize(index)) return false;
+    if (isPokemon(index) && m_nodes[node.parent].children.size() >= 6) return false;
     QString copy = m_source.mid(node.start, node.end-node.start);
     if (node.parent < 0) {
         if (!QRegularExpression("^[A-Za-z_][A-Za-z0-9_]*$").match(name).hasMatch() || m_mask.contains(QRegularExpression("\\b" + QRegularExpression::escape(name) + "\\b"))) return false;
         copy.replace(QRegularExpression("\\b" + QRegularExpression::escape(node.name) + "\\b"), name);
         const int semicolon = m_mask.indexOf(';', node.end);
         if (semicolon < 0) return false;
-        QString updated = m_source; updated.insert(semicolon + 1, "\n\n" + copy + ";"); parse(updated);
+        QString updated = m_source; updated.insert(semicolon + 1, (m_source.contains("\r\n") ? "\r\n\r\n" : "\n\n") + copy + ";"); parse(updated);
     } else {
         if (node.name.startsWith("[TRAINER_")) {
             if (!QRegularExpression("^TRAINER_[A-Za-z0-9_]+$").match(name).hasMatch() || m_mask.contains(QRegularExpression("\\[\\s*" + QRegularExpression::escape(name) + "\\s*\\]"))) return false;
@@ -129,8 +132,8 @@ bool BattleDocument::duplicate(int index, const QString &name) {
         QString updated = m_source;
         int after = node.end;
         while (after < m_mask.size() && m_mask[after].isSpace()) ++after;
-        if (after < m_mask.size() && m_mask[after] == ',') updated.insert(after+1, "\n    " + copy + ",");
-        else updated.insert(node.end, ",\n    " + copy);
+        if (after < m_mask.size() && m_mask[after] == ',') updated.insert(after+1, (m_source.contains("\r\n") ? "\r\n    " : "\n    ") + copy + ",");
+        else updated.insert(node.end, (m_source.contains("\r\n") ? ",\r\n    " : ",\n    ") + copy);
         parse(updated);
     }
     return true;
@@ -138,6 +141,8 @@ bool BattleDocument::duplicate(int index, const QString &name) {
 bool BattleDocument::remove(int index) {
     if (index < 0 || index >= m_nodes.size()) return false;
     const auto node = m_nodes[index];
+    if ((!m_records.contains(index) && !isPokemon(index)) || !canResize(index)) return false;
+    if (isPokemon(index) && m_nodes[node.parent].children.size() <= 1) return false;
     int start = node.start, end = node.end;
     if (node.parent < 0) {
         end = m_mask.indexOf(';', end);
@@ -155,7 +160,7 @@ bool BattleDocument::remove(int index) {
     QString updated = m_source; updated.remove(start, end-start); parse(updated); return true;
 }
 bool BattleDocument::appendPokemon(int party) {
-    if (!m_records.contains(party) || m_nodes[party].parent >= 0 || m_nodes[party].children.size() >= 6) return false;
+    if (!m_records.contains(party) || m_nodes[party].parent >= 0 || m_nodes[party].children.size() >= 6 || !canResize(party)) return false;
     const auto node = m_nodes[party];
     const QString declaration = m_source.mid(node.start, node.valueStart-node.start);
     QString pokemon = "{ .iv = 0, .lvl = 5, .species = SPECIES_TREECKO";
@@ -166,8 +171,25 @@ bool BattleDocument::appendPokemon(int party) {
     while (last > node.valueStart && m_mask[last].isSpace()) --last;
     const QString comma = m_mask[last] != '{' && m_mask[last] != ',' ? "," : "";
     QString updated = m_source;
-    updated.insert(last+1, comma + "\n    " + pokemon + ",\n");
+    const QString newline = m_source.contains("\r\n") ? "\r\n" : "\n";
+    updated.insert(last+1, comma + newline + "    " + pokemon + "," + newline);
     parse(updated);
+    return true;
+}
+
+bool BattleDocument::isPokemon(int index) const {
+    const auto node = m_nodes.at(index);
+    return node.group && node.parent >= 0 && m_records.contains(node.parent) && m_nodes[node.parent].parent < 0;
+}
+bool BattleDocument::canResize(int index) const {
+    if (index < 0 || index >= m_nodes.size()) return false;
+    // Conditional layouts and explicit array bounds need deliberate source edits.
+    int parent = m_nodes[index].parent;
+    const int container = parent < 0 ? index : parent;
+    const auto node = m_nodes[container];
+    const QString source = m_source.mid(node.start, node.end-node.start);
+    if (QRegularExpression("^\\s*#", QRegularExpression::MultilineOption).match(source).hasMatch()) return false;
+    if (node.parent < 0 && !QRegularExpression("\\[\\s*\\]\\s*=\\s*$").match(m_mask.mid(node.start, node.valueStart-node.start)).hasMatch()) return false;
     return true;
 }
 

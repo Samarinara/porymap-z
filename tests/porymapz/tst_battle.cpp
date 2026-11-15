@@ -11,6 +11,13 @@
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
+#include <QLineEdit>
+#include <QSpinBox>
+#include <QStyledItemDelegate>
+#include <QCompleter>
+#include <QStyleOptionViewItem>
+#include <QAction>
 using namespace PorymapZ;
 static const QString trainers = "// untouched\nconst struct Trainer gTrainers[] = {\n"
     " [TRAINER_TEST] = {\n .trainerName = _(\"A, {B} \\\"C\\\"\"), // name\n .doubleBattle = FALSE,\n .items = {ITEM_NONE, ITEM_POTION},\n .party = {.NoItemCustomMoves = sParty_Test},\n },\n};\n";
@@ -22,6 +29,28 @@ class BattleTest : public QObject {
     int field(const BattleDocument &doc, const QString &name) {
         for (int i = 0; i < doc.nodes().size(); ++i) if (doc.nodes()[i].name == name) return i;
         return -1;
+    }
+    bool createProject(QTemporaryDir &dir, const QString &trainerSource = trainers, const QString &partySource = parties) {
+        if (!QDir(dir.path()).mkpath("src/data")) return false;
+        for (const auto &pair : {qMakePair(QString("trainers.h"), trainerSource), qMakePair(QString("trainer_parties.h"), partySource)}) {
+            QFile file(dir.filePath("src/data/" + pair.first));
+            if (!file.open(QIODevice::WriteOnly) || file.write(pair.second.toUtf8()) != pair.second.toUtf8().size()) return false;
+        }
+        return true;
+    }
+    QTreeWidgetItem *findField(QTreeWidget *tree, const QString &field) {
+        for (QTreeWidgetItemIterator it(tree); *it; ++it) if ((*it)->data(0, Qt::UserRole+1).toString() == field) return *it;
+        return nullptr;
+    }
+    QModelIndex valueIndex(QTreeWidget *tree, QTreeWidgetItem *item) {
+        QList<int> rows;
+        for (auto *current = item; current; current = current->parent()) rows.prepend(current->parent() ? current->parent()->indexOfChild(current) : tree->indexOfTopLevelItem(current));
+        QModelIndex index;
+        for (int row : rows) index = tree->model()->index(row, 0, index);
+        return index.sibling(index.row(), 1);
+    }
+    void answer(QMessageBox::StandardButton choice) {
+        QTimer::singleShot(0, [choice] { auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); if (box) box->button(choice)->click(); });
     }
 private slots:
     void trainerFieldsPreserveSource() {
@@ -37,6 +66,7 @@ private slots:
         const auto before = doc.source();
         QVERIFY(!doc.setValue(field(doc, ".doubleBattle"), "FALSE, .bad = TRUE"));
         QVERIFY(!doc.setValue(field(doc, ".doubleBattle"), "\"unterminated"));
+        QVERIFY(!doc.setValue(field(doc, ".doubleBattle"), "([)]"));
         QCOMPARE(doc.source(), before);
         QVERIFY(doc.duplicate(doc.records().first(), "TRAINER_NEW"));
         QCOMPARE(doc.records().size(), 2);
@@ -72,6 +102,127 @@ private slots:
         QVERIFY(doc.source().contains("TRUE /* keep , { } */,"));
         QVERIFY(doc.source().contains("\r\n"));
     }
+    void partyLimitsAndSafeMutation() {
+        BattleDocument doc; QVERIFY(doc.parse(parties));
+        int party = doc.records().first();
+        QVERIFY(!doc.remove(doc.nodes()[party].children.first()));
+        QVERIFY(!doc.duplicate(field(doc, ".moves")));
+        QVERIFY(!doc.remove(field(doc, ".moves")));
+        for (int count = 1; count < 6; ++count) QVERIFY(doc.appendPokemon(party));
+        const auto full = doc.source();
+        QVERIFY(!doc.appendPokemon(party));
+        QVERIFY(!doc.duplicate(doc.nodes()[party].children.first()));
+        QCOMPARE(doc.source(), full);
+        QVERIFY(doc.parse(QString(parties).replace("[]", "[1]")));
+        QVERIFY(!doc.appendPokemon(doc.records().first()));
+        QVERIFY(doc.parse(trainers));
+        const auto before = doc.source();
+        QVERIFY(!doc.remove(field(doc, ".items")));
+        QVERIFY(!doc.duplicate(field(doc, ".party")));
+        QCOMPARE(doc.source(), before);
+    }
+    void intuitiveControlsAndNavigation() {
+        QTemporaryDir dir;
+        QVERIFY(createProject(dir, QString(trainers).replace("sParty_Test", "customTeam"), QString(parties).replace("sParty_Test", "customTeam")));
+        BattleEditor editor; QVERIFY(editor.setScene(dir.path(), "Test", {}));
+        auto *tree = editor.findChild<QTreeWidget *>("battleFields");
+        auto *files = editor.findChild<QComboBox *>("battleFiles");
+        auto *source = editor.findChild<QPlainTextEdit *>("battleSource");
+        auto *duplicate = editor.findChild<QPushButton *>("duplicateBattleRecord");
+        auto *remove = editor.findChild<QPushButton *>("deleteBattleRecord");
+        auto *add = editor.findChild<QPushButton *>("addBattlePokemon");
+        auto *go = editor.findChild<QPushButton *>("goToBattleParty");
+        QVERIFY(go->isEnabled()); QVERIFY(!add->isEnabled());
+        tree->setCurrentItem(findField(tree, ".items"));
+        QCOMPARE(remove->text(), QString("Delete Trainer"));
+        auto *battle = findField(tree, ".doubleBattle");
+        QVERIFY(battle); QCOMPARE(battle->text(0), QString("Battle format"));
+        QWidget host;
+        auto *delegate = tree->itemDelegate();
+        const auto battleIndex = valueIndex(tree, battle);
+        auto *combo = qobject_cast<QComboBox *>(delegate->createEditor(&host, QStyleOptionViewItem(), battleIndex));
+        QVERIFY(combo); delegate->setEditorData(combo, battleIndex);
+        QCOMPARE(combo->currentText(), QString("Single battle"));
+        combo->setCurrentIndex(1); delegate->setModelData(combo, tree->model(), battleIndex);
+        QVERIFY(source->toPlainText().contains(".doubleBattle = TRUE"));
+        QVERIFY(editor.hasUnsavedChanges());
+        answer(QMessageBox::Cancel); go->click();
+        QCOMPARE(files->currentIndex(), 0); QVERIFY(editor.hasUnsavedChanges());
+        source->undo(); QVERIFY(!editor.hasUnsavedChanges());
+        go->click(); QCOMPARE(files->currentIndex(), 1);
+        QCOMPARE(editor.findChild<QListWidget *>("battleRecords")->currentItem()->text(), QString("customTeam"));
+        auto *level = findField(tree, ".lvl"); QVERIFY(level);
+        const auto levelIndex = valueIndex(tree, level);
+        auto *spin = qobject_cast<QSpinBox *>(delegate->createEditor(&host, QStyleOptionViewItem(), levelIndex));
+        QVERIFY(spin); QCOMPARE(spin->minimum(), 1); QCOMPARE(spin->maximum(), 100);
+        delegate->setEditorData(spin, levelIndex); QCOMPARE(spin->value(), 5);
+        spin->setValue(50); delegate->setModelData(spin, tree->model(), levelIndex);
+        QVERIFY(tree->topLevelItem(0)->child(0)->text(1).contains("Level 50"));
+        tree->setCurrentItem(findField(tree, ".species"));
+        QCOMPARE(duplicate->text(), QString("Duplicate Pokémon"));
+        QVERIFY(!remove->isEnabled()); // The last Pokémon cannot be removed.
+        duplicate->click(); QCOMPARE(tree->topLevelItem(0)->childCount(), 2);
+        source->undo(); QCOMPARE(tree->topLevelItem(0)->childCount(), 1);
+        source->undo(); QVERIFY(!editor.hasUnsavedChanges());
+        level = findField(tree, ".lvl"); level->setText(1, "101");
+        QCOMPARE(level->text(1), QString("5")); QVERIFY(!editor.hasUnsavedChanges());
+        auto *search = editor.findChild<QLineEdit *>("battleSearch");
+        search->setText("no matching records");
+        QCOMPARE(tree->topLevelItemCount(), 0);
+        QVERIFY(!duplicate->isEnabled()); QVERIFY(!remove->isEnabled()); QVERIFY(!add->isEnabled());
+        search->clear(); QCOMPARE(tree->topLevelItemCount(), 1);
+    }
+    void plainNamesAndScopedCompletion() {
+        QTemporaryDir dir;
+        QVERIFY(createProject(dir, QString(trainers).replace("_(\"A, {B} \\\"C\\\"\")", "_(\"ALICE\")")));
+        QVERIFY(QDir(dir.path()).mkpath("include/constants"));
+        QFile constants(dir.filePath("include/constants/species.h"));
+        QVERIFY(constants.open(QIODevice::WriteOnly)); constants.write("#define SPECIES_TREECKO 1\n#define MOVE_POUND 1\n#define ITEM_NONE 0\n"); constants.close();
+        BattleEditor editor; QVERIFY(editor.setScene(dir.path(), "Test", {}));
+        auto *tree = editor.findChild<QTreeWidget *>("battleFields");
+        auto *source = editor.findChild<QPlainTextEdit *>("battleSource");
+        QWidget host;
+        auto *delegate = tree->itemDelegate();
+        auto *name = findField(tree, ".trainerName"); QVERIFY(name);
+        const auto nameIndex = valueIndex(tree, name);
+        auto *line = qobject_cast<QLineEdit *>(delegate->createEditor(&host, QStyleOptionViewItem(), nameIndex));
+        QVERIFY(line); delegate->setEditorData(line, nameIndex); QCOMPARE(line->text(), QString("ALICE"));
+        line->setText("BOB"); delegate->setModelData(line, tree->model(), nameIndex);
+        QVERIFY(source->toPlainText().contains("_(\"BOB\")"));
+        QVERIFY(editor.findChild<QListWidget *>("battleRecords")->currentItem()->text().startsWith("BOB"));
+        auto *undo = editor.findChild<QPushButton *>("undoBattleData");
+        auto *redo = editor.findChild<QPushButton *>("redoBattleData");
+        QVERIFY(undo->isEnabled()); undo->click(); QVERIFY(!editor.hasUnsavedChanges());
+        QVERIFY(redo->isEnabled()); redo->click(); QVERIFY(editor.hasUnsavedChanges());
+        editor.show(); tree->setFocus();
+        QAction mapUndo(&editor); mapUndo.setShortcut(QKeySequence::Undo); editor.addAction(&mapUndo);
+        QSignalSpy mapUndoTriggered(&mapUndo, &QAction::triggered);
+        QTest::keyClick(tree, Qt::Key_Z, Qt::ControlModifier);
+        QVERIFY(!editor.hasUnsavedChanges()); QCOMPARE(mapUndoTriggered.count(), 0);
+        editor.findChild<QPushButton *>("goToBattleParty")->click();
+        auto *species = findField(tree, ".species"); QVERIFY(species);
+        const auto speciesIndex = valueIndex(tree, species);
+        auto *speciesEditor = qobject_cast<QLineEdit *>(delegate->createEditor(&host, QStyleOptionViewItem(), speciesIndex));
+        QVERIFY(speciesEditor && speciesEditor->completer());
+        auto *model = speciesEditor->completer()->model();
+        QCOMPARE(model->rowCount(), 1); QCOMPARE(model->index(0,0).data().toString(), QString("SPECIES_TREECKO"));
+    }
+    void crlfUndoAndSave() {
+        QTemporaryDir dir; QVERIFY(createProject(dir, QString(trainers).replace("\n", "\r\n")));
+        BattleEditor editor; QVERIFY(editor.setScene(dir.path(), "Test", {}));
+        auto *tree = editor.findChild<QTreeWidget *>("battleFields");
+        auto *source = editor.findChild<QPlainTextEdit *>("battleSource");
+        findField(tree, ".doubleBattle")->setText(1, "TRUE");
+        QVERIFY(editor.hasUnsavedChanges());
+        source->undo(); QVERIFY(!editor.hasUnsavedChanges());
+        source->redo(); QVERIFY(editor.hasUnsavedChanges());
+        QVERIFY(editor.saveChanges()); QVERIFY(!editor.hasUnsavedChanges());
+        source->undo(); QVERIFY(editor.hasUnsavedChanges());
+        source->redo(); QVERIFY(!editor.hasUnsavedChanges());
+        QFile file(dir.filePath("src/data/trainers.h")); QVERIFY(file.open(QIODevice::ReadOnly));
+        const auto bytes = file.readAll(); QVERIFY(bytes.contains("\r\n"));
+        QVERIFY(!QByteArray(bytes).replace("\r\n", "").contains('\n'));
+    }
     void editorSavesAndProtectsExternalChanges() {
         QTemporaryDir dir;
         QVERIFY(QDir(dir.path()).mkpath("src/data"));
@@ -86,7 +237,7 @@ private slots:
         QCOMPARE(records->count(), 1);
         auto *root = fields->topLevelItem(0);
         QVERIFY(root);
-        for (int i=0; i<root->childCount(); ++i) if (root->child(i)->text(0) == ".doubleBattle") root->child(i)->setText(1, "TRUE");
+        for (int i=0; i<root->childCount(); ++i) if (root->child(i)->data(0, Qt::UserRole+1).toString() == ".doubleBattle") root->child(i)->setText(1, "TRUE");
         QVERIFY(editor.hasUnsavedChanges());
         QVERIFY(editor.saveChanges());
         QVERIFY(!editor.hasUnsavedChanges());
