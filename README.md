@@ -88,3 +88,16 @@ symlinks are rejected to protect the original files. Optional build arguments
 (e.g. `modern`) and character settings are remembered per project. The initial
 copy and build can take a while and need enough temporary disk space for the
 project. Normal map scripts still run, including any map-specific story events.
+
+To verify Play against a real game checkout using its normal toolchain, run:
+
+```sh
+python3 tests/porymapz/verify_playtest_build.py /path/to/pokeemerald-expansion \
+    --artifact-dir build/playtest-verification
+```
+
+This runs the same temporary-copy build as Play, checks the generated GBA header
+and checksum, exports the ROM and build artifacts, and verifies that the original
+startup sources are unchanged. It uses a ROM checker in place of the emulator;
+it does not test gameplay. Use `--make-arg=modern` or other repeated
+`--make-arg=...` options when the project needs additional build arguments.

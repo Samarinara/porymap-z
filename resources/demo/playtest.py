@@ -72,6 +72,11 @@ def patch_project(root, config):
     sources['intro'] = add_game_headers(intro[:start] + body + intro[end:], ['overworld.h'])
 
     new_game = sources['new_game']
+    start, _ = function_span(new_game, 'NewGameInitData')
+    # _() expands to a brace initializer after the game's text preprocessing.
+    # It must initialize an array rather than appear as a function argument.
+    trainer_name = f'\n    static const u8 sPorymapDemoTrainerName[] = _("{name}");\n'
+    new_game = new_game[:start + 1] + trainer_name + new_game[start + 1:]
     _, end = function_span(new_game, 'NewGameInitData')
     pokemon_header = root / 'include' / 'pokemon.h'
     pokemon_api = pokemon_header.read_text() if pokemon_header.exists() else ''
@@ -87,12 +92,17 @@ def patch_project(root, config):
     setup = f'''
     /* Porymap disposable demo character. */
     gSaveBlock2Ptr->playerGender = {config['gender']};
-    StringCopy(gSaveBlock2Ptr->playerName, _("{name}"));
+    StringCopy(gSaveBlock2Ptr->playerName, sPorymapDemoTrainerName);
     {create_mon}
     {party_count} = 1;
     SetMoney(&gSaveBlock1Ptr->money, 3000);
-    SetWarpDestination(MAP_GROUP({map_id}), MAP_NUM({map_id}), -1, {config['x']}, {config['y']});
+    SetWarpDestination(MAP_GROUP({map_id}), MAP_NUM({map_id}), -1, -1, -1);
     WarpIntoMap();
+    /* The warp API narrows coordinates to s8; the save fields are s16. */
+    gSaveBlock1Ptr->location.x = {config['x']};
+    gSaveBlock1Ptr->location.y = {config['y']};
+    gSaveBlock1Ptr->pos.x = {config['x']};
+    gSaveBlock1Ptr->pos.y = {config['y']};
 '''
     sources['new_game'] = add_game_headers(new_game[:end] + setup + new_game[end:],
                                           ['string_util.h', 'constants/species.h', 'constants/maps.h'])
@@ -120,7 +130,10 @@ def copy_project(source, target):
             path = Path(directory) / name
             if path.is_symlink():
                 raise ValueError(f'Playtest requires a project without symlinks: {path}')
-            if name in excluded or path.suffix in {'.gba', '.elf', '.sav', '.ss0', '.ss1'}:
+            # Only root-level ROMs are build outputs. Nested .gba files include
+            # required multiboot programs consumed by the game's assembler.
+            if name in excluded or (Path(directory) == source and
+                                    path.suffix in {'.gba', '.elf', '.sav', '.ss0', '.ss1'}):
                 result.append(name)
         return result
     shutil.copytree(source, target, ignore=ignore)

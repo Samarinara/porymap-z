@@ -58,7 +58,9 @@ void CB2_NewGame(void) {
         self.assertIn('playerGender = 1;', new)
         self.assertIn('_("DEMO")', new)
         self.assertIn('SPECIES_TREECKO, 25,', new)
-        self.assertIn('MAP_NUM(MAP_ROUTE101), -1, 3, 7', new)
+        self.assertIn('MAP_NUM(MAP_ROUTE101), -1, -1, -1', new)
+        self.assertIn('gSaveBlock1Ptr->pos.x = 3;', new)
+        self.assertIn('gSaveBlock1Ptr->pos.y = 7;', new)
         self.assertLess(new.index('ResetFlags();'), new.index('/* Porymap'))
         self.assertLess(new.index('/* Porymap'), new.index('void OtherFunction'))
         self.assertIn('SetMainCallback2(CB2_NewGame)', (self.root / 'src/intro.c').read_text())
@@ -74,10 +76,11 @@ typedef unsigned char u8;
 #define FALSE 0
 #define OT_ID_PLAYER_ID 0
 #define B_TRAINER_PLAYER 0
-#define _(text) ((const u8 *)(text))
+#define _(text) {text}
 struct Pokemon { int level; };
 struct Save2 { u8 playerGender, playerName[8], optionsSound; };
-struct Save1 { unsigned money; };
+struct Coords { short x, y; };
+struct Save1 { unsigned money; struct Coords location, pos; };
 extern struct Save2 *gSaveBlock2Ptr;
 extern struct Save1 *gSaveBlock1Ptr;
 extern struct Pokemon gPlayerParty[6], gParties[1][6];
@@ -93,7 +96,7 @@ void ClearSav1(void);
 void WarpToTruck(void);
 void ResetFlags(void);
 void SetMoney(unsigned *, unsigned);
-void SetWarpDestination(int, int, int, int, int);
+void SetWarpDestination(signed char, signed char, signed char, signed char, signed char);
 void WarpIntoMap(void);
 ''')
         (include / 'overworld.h').write_text('''
@@ -122,10 +125,13 @@ void CB2_NewGame(void);
                 else:
                     (include / 'pokemon.h').write_text(
                         'void CreateMon(struct Pokemon *, int, int, int, int, int, int, int);\n')
+                # Tall/wide maps must not pass their s16 coordinates through
+                # SetWarpDestination's signed 8-bit parameters.
+                self.config.update(x=139, y=130)
                 playtest.patch_project(self.root, self.config)
                 for name in ('intro', 'new_game'):
                     result = subprocess.run(
-                        ['cc', '-std=c99', '-Werror', '-fsyntax-only', '-I', str(include),
+                        ['cc', '-std=c99', '-Werror', '-Wconversion', '-fsyntax-only', '-I', str(include),
                          str(self.root / 'src' / f'{name}.c')],
                         capture_output=True, text=True, timeout=20)
                     self.assertEqual(result.returncode, 0, result.stderr)
@@ -149,7 +155,7 @@ void CB2_NewGame(void) {
         self.assertEqual(patched.count('gFieldCallback = FieldCB_WarpExitFadeFromBlack;'), 2)
         self.assertNotIn('ExecuteTruckSequence', patched)
         self.assertIn('gFieldCallback2 = NULL;', patched)
-        self.assertIn('MAP_NUM(MAP_ROUTE105), -1, 3, 7',
+        self.assertIn('MAP_NUM(MAP_ROUTE105), -1, -1, -1',
                       (self.root / 'src/new_game.c').read_text())
 
     def test_expansion_modern_pokemon_creation_and_party_storage(self):
@@ -204,6 +210,15 @@ void CB2_NewGame(void) {
         self.assertFalse((self.root / '.histignore').exists())
         self.assertEqual((self.root / '.git/HEAD').read_text(), 'ref: refs/heads/master\n')
 
+    def test_snapshot_preserves_multiboot_roms_used_as_source_assets(self):
+        (self.root / 'data').mkdir()
+        for name in ('mb_berry_fix.gba', 'mb_ereader.gba', 'mb_colosseum.gba'):
+            (self.root / 'data' / name).write_bytes(b'embedded multiboot program')
+        target = Path(self.temp.name) / 'snapshot'
+        playtest.copy_project(self.root, target)
+        for name in ('mb_berry_fix.gba', 'mb_ereader.gba', 'mb_colosseum.gba'):
+            self.assertEqual((target / 'data' / name).read_bytes(), b'embedded multiboot program')
+
     @unittest.skipIf(os.name != 'posix', 'POSIX executable fixture')
     def test_symlink_cannot_modify_original(self):
         (self.root / 'src/link.c').symlink_to(self.root / 'src/new_game.c')
@@ -233,7 +248,9 @@ void CB2_NewGame(void) {
         result, record = self.run_helper()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         data = json.loads(record.read_text())
-        self.assertIn('MAP_NUM(MAP_ROUTE101), -1, 3, 7', data['source'])
+        self.assertIn('MAP_NUM(MAP_ROUTE101), -1, -1, -1', data['source'])
+        self.assertIn('gSaveBlock1Ptr->pos.x = 3;', data['source'])
+        self.assertIn('gSaveBlock1Ptr->pos.y = 7;', data['source'])
         self.assertNotEqual(Path(data['rom']).parent, self.root)
         self.assertFalse(Path(data['rom']).exists(), 'temporary demo should be removed')
         self.assertEqual((self.root / 'src/new_game.c').read_bytes(), original)
