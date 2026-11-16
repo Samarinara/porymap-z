@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -21,6 +22,7 @@ class PlaytestTests(unittest.TestCase):
         self.root = Path(self.temp.name) / 'original'
         (self.root / 'src').mkdir(parents=True)
         (self.root / 'src/intro.c').write_text('''
+#include "global.h"
 void CB2_InitCopyrightScreenAfterBootup(void) {
     if (!SetUpCopyrightScreen()) {
         SetSaveBlocksPointers(0);
@@ -30,6 +32,8 @@ void CB2_InitCopyrightScreenAfterBootup(void) {
 }
 ''')
         (self.root / 'src/new_game.c').write_text('''
+#include "global.h"
+#include "pokemon.h"
 void NewGameInitData(void) {
     /* A brace in a comment: } */
     ClearSav1();
@@ -59,6 +63,72 @@ void CB2_NewGame(void) {
         self.assertLess(new.index('/* Porymap'), new.index('void OtherFunction'))
         self.assertIn('SetMainCallback2(CB2_NewGame)', (self.root / 'src/intro.c').read_text())
         self.assertNotIn('ExecuteTruckSequence', (self.root / 'src/overworld.c').read_text())
+
+    @unittest.skipUnless(shutil.which('cc'), 'Requires a C compiler')
+    def test_patched_sources_compile_with_headers_that_require_global_types(self):
+        include = self.root / 'include'
+        (include / 'constants').mkdir(parents=True)
+        (include / 'global.h').write_text('''
+#pragma once
+typedef unsigned char u8;
+#define FALSE 0
+#define OT_ID_PLAYER_ID 0
+#define B_TRAINER_PLAYER 0
+#define _(text) ((const u8 *)(text))
+struct Pokemon { int level; };
+struct Save2 { u8 playerGender, playerName[8], optionsSound; };
+struct Save1 { unsigned money; };
+extern struct Save2 *gSaveBlock2Ptr;
+extern struct Save1 *gSaveBlock1Ptr;
+extern struct Pokemon gPlayerParty[6], gParties[1][6];
+extern u8 gPlayerPartyCount, gPartiesCount[1];
+enum { SAVE_NORMAL };
+int SetUpCopyrightScreen(void);
+void SetSaveBlocksPointers(int);
+void LoadGameSave(int);
+void SetPokemonCryStereo(u8);
+void Sav2_ClearSetDefault(void);
+void SetMainCallback2(void (*callback)(void));
+void ClearSav1(void);
+void WarpToTruck(void);
+void ResetFlags(void);
+void SetMoney(unsigned *, unsigned);
+void SetWarpDestination(int, int, int, int, int);
+void WarpIntoMap(void);
+''')
+        (include / 'overworld.h').write_text('''
+#pragma once
+struct InitialPlayerAvatarState { u8 transitionFlags, direction; };
+void CB2_NewGame(void);
+''')
+        (include / 'string_util.h').write_text('#pragma once\nvoid StringCopy(u8 *, const u8 *);\n')
+        (include / 'constants/species.h').write_text('#define SPECIES_TREECKO 277\n')
+        (include / 'constants/maps.h').write_text('''
+#define MAP_ROUTE101 0x0101
+#define MAP_GROUP(map) ((map) >> 8)
+#define MAP_NUM(map) ((map) & 0xFF)
+''')
+        original = {path: path.read_text() for path in (self.root / 'src').glob('*.c')}
+        for modern in (False, True):
+            with self.subTest(modern_pokemon_api=modern):
+                for path, source in original.items():
+                    path.write_text(source)
+                if modern:
+                    (include / 'pokemon.h').write_text(
+                        'void CreateRandomMon(struct Pokemon *, int, int);\n')
+                    path = self.root / 'src/new_game.c'
+                    path.write_text(path.read_text().replace(
+                        'ClearSav1();', 'ClearSav1(); gPartiesCount[B_TRAINER_PLAYER] = 0;'))
+                else:
+                    (include / 'pokemon.h').write_text(
+                        'void CreateMon(struct Pokemon *, int, int, int, int, int, int, int);\n')
+                playtest.patch_project(self.root, self.config)
+                for name in ('intro', 'new_game'):
+                    result = subprocess.run(
+                        ['cc', '-std=c99', '-Werror', '-fsyntax-only', '-I', str(include),
+                         str(self.root / 'src' / f'{name}.c')],
+                        capture_output=True, text=True, timeout=20)
+                    self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_expansion_conditional_callbacks_start_on_route105(self):
         path = self.root / 'src/overworld.c'

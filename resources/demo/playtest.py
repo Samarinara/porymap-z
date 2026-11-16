@@ -30,6 +30,16 @@ def function_span(source, name):
     return start, end - 1
 
 
+def add_game_headers(source, headers):
+    # Game headers rely on the types and macros initialized by global.h.
+    anchor = re.search(r'^\s*#\s*include\s*"global\.h"[^\n]*(?:\n|$)', source, re.M)
+    if not anchor:
+        raise ValueError('Unsupported project: missing global.h include.')
+    added = ''.join(f'#include "{header}"\n' for header in headers
+                    if not re.search(r'^\s*#\s*include\s*"' + re.escape(header) + r'"', source, re.M))
+    return source[:anchor.end()] + added + source[anchor.end():]
+
+
 def patch_project(root, config):
     root = Path(root)
     name = config['name']
@@ -59,7 +69,7 @@ def patch_project(root, config):
     if body.count(anchor) != 1:
         raise ValueError('Unsupported project: copyright initialization differs.')
     body = body.replace(anchor, anchor + '\n        Sav2_ClearSetDefault();\n        SetMainCallback2(CB2_NewGame);')
-    sources['intro'] = '#include "overworld.h"\n' + intro[:start] + body + intro[end:]
+    sources['intro'] = add_game_headers(intro[:start] + body + intro[end:], ['overworld.h'])
 
     new_game = sources['new_game']
     _, end = function_span(new_game, 'NewGameInitData')
@@ -84,8 +94,8 @@ def patch_project(root, config):
     SetWarpDestination(MAP_GROUP({map_id}), MAP_NUM({map_id}), -1, {config['x']}, {config['y']});
     WarpIntoMap();
 '''
-    sources['new_game'] = ('#include "string_util.h"\n#include "constants/species.h"\n'
-                           '#include "constants/maps.h"\n' + new_game[:end] + setup + new_game[end:])
+    sources['new_game'] = add_game_headers(new_game[:end] + setup + new_game[end:],
+                                          ['string_util.h', 'constants/species.h', 'constants/maps.h'])
     overworld = sources['overworld']
     start, end = function_span(overworld, 'CB2_NewGame')
     body = overworld[start:end]
