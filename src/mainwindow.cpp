@@ -1266,7 +1266,8 @@ bool MainWindow::setMap(const QString &mapName) {
 
 #ifdef PORYMAP_Z
     battleEditor->setScene(editor->project->root, editor->map->name(), editor->map->getScriptsFilepath(),
-        projectConfig.baseGameVersion == BaseGameVersion::pokeemerald && !projectConfig.usePoryScript);
+        projectConfig.baseGameVersion == BaseGameVersion::pokeemerald || projectConfig.baseGameVersion == BaseGameVersion::pokefirered,
+        !projectConfig.usePoryScript);
     dialogueEditor->setScene(editor->project->root, editor->map->name(), editor->map->getScriptsFilepath(),
         projectConfig.baseGameVersion == BaseGameVersion::pokeemerald && !projectConfig.usePoryScript);
 #endif

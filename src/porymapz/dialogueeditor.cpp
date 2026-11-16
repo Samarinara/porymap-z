@@ -165,7 +165,7 @@ void DialogueEditor::scan() {
     m_files->setEnabled(available);
     m_views->setEnabled(available);
     m_status->setText(available ? tr("No editable files found for this scene.")
-        : tr("Scene editing supports pokeemerald assembly projects. Select a map to begin."));
+        : tr("Scene editing is unavailable for this project or map. Supported assembly source is required."));
     if (!available) return;
     const QString folder = m_scope->currentIndex() == 0 ? QFileInfo(m_scriptsPath).absolutePath() : m_root + "/data";
     const auto canonicalFolder = QFileInfo(folder).canonicalFilePath();
@@ -267,7 +267,7 @@ bool DialogueEditor::saveChanges() {
     const int row = m_entryIndex;
     displayDocument();
     if (row >= 0 && row < m_entries->count()) m_entries->setCurrentRow(row);
-    m_status->setText(tr("Saved. Build your pokeemerald project to test the changes in game."));
+    m_status->setText(tr("Saved. Build your game project to test the changes in game."));
     emit sourceSaved(currentPath());
     return true;
 }

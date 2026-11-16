@@ -18,6 +18,10 @@
 #include <QCompleter>
 #include <QStyleOptionViewItem>
 #include <QAction>
+#include <QLabel>
+#include <QTabWidget>
+#include <QSet>
+#include "porymapz/dialogueeditor.h"
 using namespace PorymapZ;
 static const QString trainers = "// untouched\nconst struct Trainer gTrainers[] = {\n"
     " [TRAINER_TEST] = {\n .trainerName = _(\"A, {B} \\\"C\\\"\"), // name\n .doubleBattle = FALSE,\n .items = {ITEM_NONE, ITEM_POTION},\n .party = {.NoItemCustomMoves = sParty_Test},\n },\n};\n";
@@ -206,6 +210,88 @@ private slots:
         QVERIFY(speciesEditor && speciesEditor->completer());
         auto *model = speciesEditor->completer()->model();
         QCOMPARE(model->rowCount(), 1); QCOMPARE(model->index(0,0).data().toString(), QString("SPECIES_TREECKO"));
+    }
+    void relocatedDataAndMissingFileMessages() {
+        QTemporaryDir dir; QVERIFY(createProject(dir));
+        QVERIFY(QDir(dir.path()).mkpath("src/data/trainers"));
+        QVERIFY(QFile::rename(dir.filePath("src/data/trainer_parties.h"), dir.filePath("src/data/trainers/parties.h")));
+        BattleEditor editor; QVERIFY(editor.setScene(dir.path(), "Test", {}));
+        auto *files = editor.findChild<QComboBox *>("battleFiles");
+        QCOMPARE(files->itemData(1).toString(), QString("src/data/trainers/parties.h"));
+        files->setCurrentIndex(1);
+        QCOMPARE(editor.findChild<QListWidget *>("battleRecords")->count(), 1);
+        QVERIFY(QFile::remove(dir.filePath("src/data/trainers/parties.h")));
+        files->setCurrentIndex(0); files->setCurrentIndex(1);
+        QVERIFY(!editor.findChild<QPlainTextEdit *>("battleSource")->isEnabled());
+        bool found = false;
+        for (auto *label : editor.findChildren<QLabel *>()) if (label->text().contains("File not found") && label->text().contains("Locate File")) found = true;
+        QVERIFY(found);
+        QVERIFY(editor.findChild<QPushButton *>("locateBattleFile")->isEnabled());
+    }
+    void stockPartyMacros_data() {
+        QTest::addColumn<QString>("macro");
+        for (const QString &macro : QStringList{"NO_ITEM_DEFAULT_MOVES", "NO_ITEM_CUSTOM_MOVES", "ITEM_DEFAULT_MOVES", "ITEM_CUSTOM_MOVES"})
+            QTest::newRow(qPrintable(macro)) << macro;
+    }
+    void stockPartyMacros() {
+        QFETCH(QString, macro);
+        QTemporaryDir dir;
+        QVERIFY(createProject(dir, QString(trainers).replace("{.NoItemCustomMoves = sParty_Test}", macro + "(sParty_Test)")));
+        BattleEditor editor; QVERIFY(editor.setScene(dir.path(), "Test", {}, true, false));
+        // C trainer data is still available when scene scripts use Poryscript.
+        QVERIFY(editor.findChild<QPlainTextEdit *>("battleSource")->isEnabled());
+        auto *go = editor.findChild<QPushButton *>("goToBattleParty"); QVERIFY(go->isEnabled());
+        go->click();
+        QCOMPARE(editor.findChild<QComboBox *>("battleFiles")->currentIndex(), 1);
+        QCOMPARE(editor.findChild<QListWidget *>("battleRecords")->currentItem()->text(), QString("sParty_Test"));
+        auto *scripts = editor.findChild<DialogueEditor *>("battleScripts");
+        QVERIFY(!scripts->findChild<QPlainTextEdit *>("sceneScript")->isEnabled());
+    }
+    void stockCorpora() {
+        const auto root = qEnvironmentVariable("PORYMAP_Z_BATTLE_CORPUS");
+        if (root.isEmpty()) QSKIP("Set PORYMAP_Z_BATTLE_CORPUS to a folder with emerald/ and firered/ stock source copies.");
+        for (const QString &game : QStringList{"emerald", "firered"}) {
+            const QString project = root + '/' + game;
+            QSet<QString> partiesFound;
+            for (const QString &name : QStringList{"trainer_parties.h", "trainers.h"}) {
+                QFile file(project + "/src/data/" + name); QVERIFY(file.open(QIODevice::ReadOnly));
+                const auto bytes = file.readAll();
+                BattleDocument document; QVERIFY(document.parse(QString::fromUtf8(bytes)));
+                QVERIFY(document.records().size() > 500);
+                if (name == "trainer_parties.h") {
+                    for (int node : document.records()) partiesFound.insert(document.nodes().at(node).name);
+                    const auto original = document.source();
+                    const int record = document.records().last();
+                    const int mon = document.nodes().at(record).children.first();
+                    bool edited = false;
+                    for (int child : document.nodes().at(mon).children) {
+                        if (document.nodes().at(child).name != ".lvl") continue;
+                        const auto field = document.nodes().at(child);
+                        const auto value = original.mid(field.valueStart, field.end-field.valueStart);
+                        QVERIFY(document.setValue(child, "42"));
+                        QCOMPARE(document.source(), QString(original).replace(field.valueStart, field.end-field.valueStart, "42"));
+                        QVERIFY(document.setValue(child, value)); QCOMPARE(document.source(), original);
+                        edited = true; break;
+                    }
+                    QVERIFY(edited);
+                } else {
+                    int checked = 0;
+                    const QRegularExpression macro("(?:NO_ITEM_DEFAULT_MOVES|NO_ITEM_CUSTOM_MOVES|ITEM_DEFAULT_MOVES|ITEM_CUSTOM_MOVES)\\s*\\(\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\)");
+                    auto matches = macro.globalMatch(document.source());
+                    while (matches.hasNext()) { QVERIFY(partiesFound.contains(matches.next().captured(1))); ++checked; }
+                    QVERIFY(checked > 500);
+                }
+            }
+            BattleEditor editor; QVERIFY(editor.setScene(project, "Test", {}));
+            auto *go = editor.findChild<QPushButton *>("goToBattleParty");
+            auto *records = editor.findChild<QListWidget *>("battleRecords");
+            // TRAINER_NONE has no party. The next stock trainer uses a macro.
+            QVERIFY(!go->isEnabled());
+            records->setCurrentRow(1); QVERIFY(go->isEnabled()); go->click();
+            QCOMPARE(editor.findChild<QComboBox *>("battleFiles")->currentIndex(), 1);
+            QVERIFY(records->currentItem()); QVERIFY(partiesFound.contains(records->currentItem()->text()));
+            QVERIFY(!editor.hasUnsavedChanges());
+        }
     }
     void crlfUndoAndSave() {
         QTemporaryDir dir; QVERIFY(createProject(dir, QString(trainers).replace("\n", "\r\n")));

@@ -6,6 +6,8 @@
 #include <QRegularExpression>
 #include <QStyledItemDelegate>
 #include <QDir>
+#include <QDirIterator>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFontDatabase>
 #include <QHBoxLayout>
@@ -141,7 +143,10 @@ BattleEditor::BattleEditor(QWidget *parent) : QWidget(parent) {
     m_files = new QComboBox(this);
     m_files->setObjectName("battleFiles");
     auto *reload = new QPushButton(tr("Reload"), this);
-    fileRow->addWidget(m_files, 1); fileRow->addWidget(reload);
+    m_locate = new QPushButton(tr("Locate File…"), this);
+    m_locate->setObjectName("locateBattleFile");
+    m_locate->setToolTip(tr("Select the trainer data file inside this project when your fork uses a different location."));
+    fileRow->addWidget(m_files, 1); fileRow->addWidget(m_locate); fileRow->addWidget(reload);
     m_fileControls = new QWidget(this);
     m_fileControls->setLayout(fileRow);
     layout->addWidget(m_fileControls);
@@ -202,6 +207,19 @@ BattleEditor::BattleEditor(QWidget *parent) : QWidget(parent) {
     connect(m_scripts, &DialogueEditor::dirtyChanged, this, [this] { m_save->setEnabled(hasUnsavedChanges()); emit dirtyChanged(hasUnsavedChanges()); });
     connect(m_scripts, &DialogueEditor::sourceSaved, this, &BattleEditor::sourceSaved);
     connect(m_files, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &BattleEditor::loadFile);
+    connect(m_locate, &QPushButton::clicked, this, [this] {
+        const int kind = m_files->currentIndex();
+        if (kind < 0 || !confirmChanges()) return;
+        const auto path = QFileDialog::getOpenFileName(this, tr("Locate Battle Data"), m_root, tr("C source (*.h *.c)"));
+        if (path.isEmpty()) return;
+        if (!editable(path) || (kind < 2 && !containsData(path, kind))) {
+            m_status->setText(tr("Choose a C file inside this project containing %1. JSON, generated data, and custom formats need their own adapter.")
+                .arg(kind == 0 ? tr("struct Trainer definitions") : tr("struct TrainerMon… parties")));
+            return;
+        }
+        m_files->setItemData(kind, QDir(m_root).relativeFilePath(path));
+        loadFile(kind);
+    });
     connect(reload, &QPushButton::clicked, this, [this] { if (confirmChanges()) loadFile(m_files->currentIndex()); });
     connect(m_records, &QListWidget::currentRowChanged, this, &BattleEditor::showRecord);
     connect(m_search, &QLineEdit::textChanged, this, &BattleEditor::filterRecords);
@@ -310,9 +328,9 @@ bool BattleEditor::confirmChanges() {
     }
     return m_scripts->confirmChanges();
 }
-bool BattleEditor::setScene(const QString &root, const QString &map, const QString &scripts, bool supported) {
+bool BattleEditor::setScene(const QString &root, const QString &map, const QString &scripts, bool supported, bool scriptsSupported) {
     if (!confirmChanges()) return false;
-    if (!m_scripts->setScene(root, map, scripts, supported)) return false;
+    if (!m_scripts->setScene(root, map, scripts, supported && scriptsSupported)) return false;
     const QString canonical = QFileInfo(root).canonicalFilePath();
     if (m_files->count() && m_root == canonical && m_files->isEnabled() == (!canonical.isEmpty() && !map.isEmpty() && supported)) return true;
     m_root = canonical;
@@ -329,14 +347,15 @@ bool BattleEditor::setScene(const QString &root, const QString &map, const QStri
     delegate->constants.removeDuplicates(); delegate->constants.sort();
     const bool available = !m_root.isEmpty() && !map.isEmpty() && supported;
     QSignalBlocker blocker(m_files); m_files->clear(); m_fileIndex = -1;
-    m_files->addItem(tr("Trainers"), "src/data/trainers.h");
-    m_files->addItem(tr("Pokémon Parties"), "src/data/trainer_parties.h");
+    m_files->addItem(tr("Trainers"), resolveDataPath(0));
+    m_files->addItem(tr("Pokémon Parties"), resolveDataPath(1));
     m_files->addItem(tr("Trainer IDs (Advanced Source)"), "include/constants/trainers.h");
     m_files->setEnabled(available);
+    m_locate->setEnabled(available);
     m_source->setEnabled(available);
     m_fields->setEnabled(available);
     loadFile(available ? 0 : -1);
-    if (!available) m_status->setText(tr("Open a pokeemerald assembly project and select a map to edit battles."));
+    if (!available) m_status->setText(tr("Open a pokeemerald or pokefirered project and select a map to edit trainer data."));
     return true;
 }
 void BattleEditor::loadFile(int index) {
@@ -345,13 +364,22 @@ void BattleEditor::loadFile(int index) {
     m_path = index >= 0 ? m_root + '/' + m_files->itemData(index).toString() : QString();
     m_file = DialogueDocument();
     QString error;
-    const bool loaded = index >= 0 && editable(m_path) && m_file.load(m_path, &error);
+    bool loaded = false;
+    if (index >= 0) {
+        if (!QFileInfo::exists(m_path)) error = tr("File not found. Use Locate File to select your fork's C data file.");
+        else if (!editable(m_path)) error = tr("This path is a symlink or resolves outside the project.");
+        else loaded = m_file.load(m_path, &error);
+    }
     m_document.parse(loaded ? baseline() : QString());
     m_loaded = loaded;
     { QSignalBlocker block(m_source); m_source->setPlainText(m_document.source()); }
     m_source->setEnabled(loaded); m_fields->setEnabled(loaded);
     render(); setDirty(false);
     m_status->setText(loaded ? tr("%1 records • %2").arg(m_document.records().size()).arg(m_files->itemData(index).toString()) : tr("Cannot load battle data: %1 %2").arg(m_path, error));
+    if (loaded && index < 2 && !containsData(m_path, index)) {
+        m_status->setText(tr("No supported %1 declarations in %2. Use Locate File for the correct C file. Custom or generated formats require an adapter.")
+            .arg(index == 0 ? tr("trainer") : tr("party"), m_files->itemData(index).toString()));
+    }
     if (loaded && index == 2) m_views->setCurrentIndex(1);
 }
 void BattleEditor::render(int row) {
@@ -486,7 +514,7 @@ int BattleEditor::selectedTarget() const {
     // trainer, never on its items or party-reference initializer.
     if (m_document.nodes().at(record).parent < 0) {
         while (node != record && m_document.nodes().at(node).parent != record) node = m_document.nodes().at(node).parent;
-        return node;
+        return node == record || m_document.nodes().at(node).group ? node : record;
     }
     return record;
 }
@@ -500,8 +528,10 @@ QString BattleEditor::partyReference() const {
         if (field.name != ".party" && !field.name.startsWith(".party.")) continue;
         const int value = field.group && !field.children.isEmpty() ? field.children.first() : child;
         const auto node = m_document.nodes().at(value);
-        const auto reference = m_document.source().mid(node.valueStart, node.end-node.valueStart).trimmed();
-        if (QRegularExpression("^[A-Za-z_][A-Za-z0-9_]*$").match(reference).hasMatch()) return reference;
+        auto reference = m_document.source().mid(node.valueStart, node.end-node.valueStart).trimmed();
+        const auto macro = QRegularExpression("^(?:NO_ITEM_DEFAULT_MOVES|NO_ITEM_CUSTOM_MOVES|ITEM_DEFAULT_MOVES|ITEM_CUSTOM_MOVES)\\s*\\(\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\)$").match(reference);
+        if (macro.hasMatch()) reference = macro.captured(1);
+        if (reference != "NULL" && QRegularExpression("^[A-Za-z_][A-Za-z0-9_]*$").match(reference).hasMatch()) return reference;
     }
     return {};
 }
@@ -548,6 +578,35 @@ void BattleEditor::updateSummaries() {
         }
         m_records->item(row)->setText(label);
     }
+}
+
+bool BattleEditor::containsData(const QString &path, int kind) const {
+    if (!editable(path)) return false;
+    DialogueDocument source;
+    QString error;
+    if (!source.load(path, &error)) return false;
+    BattleDocument data;
+    data.parse(source.sourceText());
+    for (int record : data.records()) {
+        if ((data.nodes().at(record).parent < 0) == (kind == 1)) return true;
+    }
+    return false;
+}
+QString BattleEditor::resolveDataPath(int kind) const {
+    const QString standard = kind == 0 ? "src/data/trainers.h" : "src/data/trainer_parties.h";
+    if (m_root.isEmpty()) return standard;
+    if (QFileInfo::exists(m_root + '/' + standard)) return standard;
+    // Search only the trainer-related C headers under src/data. Do not pick
+    // among multiple matches; Locate File lets the user resolve that case.
+    QStringList matches;
+    QDirIterator it(m_root + "/src/data", {"*.h", "*.c"}, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        const QString path = it.next();
+        const auto relative = QDir(m_root).relativeFilePath(path);
+        if (!relative.contains("trainer", Qt::CaseInsensitive) && !relative.contains("parties", Qt::CaseInsensitive)) continue;
+        if (containsData(path, kind)) matches.append(relative);
+    }
+    return matches.size() == 1 ? matches.first() : standard;
 }
 
 }

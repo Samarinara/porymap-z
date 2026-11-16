@@ -17,7 +17,7 @@ class BattleEditor : public QWidget {
     Q_OBJECT
 public:
     explicit BattleEditor(QWidget *parent = nullptr);
-    bool setScene(const QString &root, const QString &map, const QString &scripts, bool supported = true);
+    bool setScene(const QString &root, const QString &map, const QString &scripts, bool supported = true, bool scriptsSupported = true);
     bool confirmChanges();
     bool saveChanges();
     bool hasUnsavedChanges() const;
@@ -41,6 +41,8 @@ private:
     QString partyReference() const;
     QString baseline() const;
     bool editable(const QString &path) const;
+    QString resolveDataPath(int kind) const;
+    bool containsData(const QString &path, int kind) const;
     QString m_root;
     QString m_path;
     bool m_dirty = false;
@@ -60,6 +62,7 @@ private:
     QPushButton *m_addPokemon;
     QPushButton *m_goParty;
     QWidget *m_fileControls;
+    QPushButton *m_locate;
     bool m_loaded = false;
     DialogueEditor *m_scripts;
 };
