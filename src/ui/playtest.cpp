@@ -125,8 +125,27 @@ void Playtest::configure() {
     });
     auto *makeArgs = new QLineEdit(settings.value(prefix + "makeArgs").toString());
     makeArgs->setObjectName("demoMakeArguments");
-    makeArgs->setPlaceholderText(tr("Optional, e.g. modern or EMERALD=1"));
+    makeArgs->setPlaceholderText(tr("Optional, e.g. modern or release"));
     form->addRow(tr("Build arguments"), makeArgs);
+    auto *buildTarget = new QComboBox;
+    buildTarget->setObjectName("demoBuildTarget");
+    buildTarget->addItem(tr("Project default"), "");
+    // Expansion's FRLG builds retain Emerald's data format. Do not change
+    // baseGameVersion when selecting a ROM target.
+    QFile general(m_editor->project->root + "/include/config/general.h");
+    QFile makefile(m_editor->project->root + "/Makefile");
+    const bool expansion = general.open(QIODevice::ReadOnly)
+        && QRegularExpression("(?m)^\\s*#\\s*define\\s+RHH_EXPANSION\\b").match(QString::fromUtf8(general.readAll())).hasMatch();
+    const QString makeSource = makefile.open(QIODevice::ReadOnly) ? QString::fromUtf8(makefile.readAll()) : QString();
+    if (expansion && QRegularExpression("(?m)^firered\\s*:").match(makeSource).hasMatch()
+                  && QRegularExpression("(?m)^leafgreen\\s*:").match(makeSource).hasMatch()) {
+        buildTarget->addItem(tr("Emerald"), "emerald");
+        buildTarget->addItem(tr("FireRed"), "firered");
+        buildTarget->addItem(tr("LeafGreen"), "leafgreen");
+    }
+    buildTarget->setCurrentIndex(qMax(0, buildTarget->findData(settings.value(prefix + "buildTarget", ""))));
+    buildTarget->setToolTip(tr("Expansion: Emerald uses Hoenn maps; FireRed and LeafGreen use Kanto maps."));
+    form->addRow(tr("Build target"), buildTarget);
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     form->addRow(buttons);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
@@ -146,12 +165,14 @@ void Playtest::configure() {
         QJsonArray args;
         for (const auto &arg : QProcess::splitCommand(makeArgs->text())) args.append(arg);
         m_config.insert("make_args", args);
+        m_config.insert("build_target", buildTarget->currentData().toString());
         settings.setValue(prefix + "name", name->text());
         settings.setValue(prefix + "gender", gender->currentIndex());
         settings.setValue(prefix + "species", species->currentText());
         settings.setValue(prefix + "level", level->value());
         settings.setValue(prefix + "emulator", executable);
         settings.setValue(prefix + "makeArgs", makeArgs->text());
+        settings.setValue(prefix + "buildTarget", buildTarget->currentData());
         dialog.accept();
     });
     if (dialog.exec() != QDialog::Accepted) return;

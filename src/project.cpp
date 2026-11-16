@@ -29,10 +29,15 @@ int Project::num_tiles_total = 1024;
 int Project::num_metatiles_primary = 512;
 int Project::num_pals_primary = 6;
 int Project::num_pals_total = 13;
+bool Project::frlgLayoutContext = false;
+int Project::num_tiles_primary_frlg = 640;
+int Project::num_metatiles_primary_frlg = 640;
+int Project::num_pals_primary_frlg = 7;
 
 Project::Project(QObject *parent) :
     QObject(parent)
 {
+    setLayoutContext(nullptr);
     this->parser.setIncbinPattern(projectConfig.getIdentifier(ProjectIdentifier::regex_incbin));
 }
 
@@ -540,6 +545,14 @@ Map *Project::createNewMap(const Project::NewMapSettings &settings, const Map* t
         }
     }
     map->setLayout(layout);
+    if (layout) {
+        const auto version = layout->customData.value("layout_version").toString();
+        if (!version.isEmpty()) {
+            auto attributes = map->customAttributes();
+            attributes["region"] = version == "frlg" ? "REGION_KANTO" : "REGION_HOENN";
+            map->setCustomAttributes(attributes);
+        }
+    }
 
     // Try to record the MAPSEC name in case this is a new name.
     addNewMapsec(map->header()->location());
@@ -571,6 +584,16 @@ Layout *Project::createNewLayout(const Layout::Settings &settings, const Layout 
     layout->tileset_primary_label = settings.primaryTilesetLabel;
     layout->tileset_secondary_label = settings.secondaryTilesetLabel;
 
+    // New layouts inherit the format used by their primary tileset. Duplicates
+    // already carry metadata; selecting a different primary tileset updates it.
+    for (const auto *existing : this->mapLayouts) {
+        if (existing->tileset_primary_label == layout->tileset_primary_label
+            && existing->customData.contains("layout_version")) {
+            layout->customData["layout_version"] = existing->customData.value("layout_version");
+            break;
+        }
+    }
+
     // If a special folder name was specified (as in the case when we're creating a layout for a new map) then use that name.
     // Otherwise the new layout's folder name will just be the layout's name.
     const QString folderName = !settings.folderName.isEmpty() ? settings.folderName : layout->name;
@@ -592,6 +615,10 @@ Layout *Project::createNewLayout(const Layout::Settings &settings, const Layout 
     if (!loadLayoutTilesets(layout)) {
         delete layout;
         return nullptr;
+    }
+    if (!layout->customData.contains("layout_version")
+        && layout->tileset_primary->attributesVersion != BaseGameVersion::none) {
+        layout->customData["layout_version"] = layout->tileset_primary->attributesVersion == BaseGameVersion::pokefirered ? "frlg" : "emerald";
     }
 
     this->mapLayouts.insert(layout->id, layout);
@@ -670,7 +697,8 @@ bool Project::readMapLayouts() {
 
         layout->width = ParseUtil::jsonToInt(layoutObj.take("width"));
         layout->height = ParseUtil::jsonToInt(layoutObj.take("height"));
-        if (projectConfig.useCustomBorderSize) {
+        const auto layoutVersion = layoutObj.value("layout_version").toString();
+        if (layoutVersion == "frlg" || (layoutVersion.isEmpty() && projectConfig.useCustomBorderSize)) {
             layout->border_width = ParseUtil::jsonToInt(layoutObj.take("border_width"));
             layout->border_height = ParseUtil::jsonToInt(layoutObj.take("border_height"));
         } else {
@@ -722,7 +750,7 @@ bool Project::saveMapLayouts() {
         layoutObj["name"] = layout->name;
         layoutObj["width"] = layout->width;
         layoutObj["height"] = layout->height;
-        if (projectConfig.useCustomBorderSize) {
+        if (layout->hasCustomBorderSize()) {
             layoutObj["border_width"] = layout->border_width;
             layoutObj["border_height"] = layout->border_height;
         }
@@ -1494,6 +1522,17 @@ bool Project::saveConfig() {
 }
 
 bool Project::loadTilesetAssets(Tileset* tileset) {
+    // Expansion uses one Emerald Tileset struct with two attribute formats.
+    // Layout metadata, rather than the ROM target or label spelling, identifies it.
+    tileset->attributesVersion = BaseGameVersion::none;
+    for (const auto *layout : this->mapLayouts) {
+        if (layout->tileset_primary_label != tileset->name && layout->tileset_secondary_label != tileset->name)
+            continue;
+        const auto version = layout->customData.value("layout_version").toString();
+        if (version == "frlg") tileset->attributesVersion = BaseGameVersion::pokefirered;
+        else if (version == "emerald") tileset->attributesVersion = BaseGameVersion::pokeemerald;
+        if (tileset->attributesVersion != BaseGameVersion::none) break;
+    }
     readTilesetPaths(tileset);
     loadTilesetMetatileLabels(tileset);
     return tileset->load();
@@ -1567,6 +1606,12 @@ Tileset *Project::createNewTileset(QString name, bool secondary, bool checkerboa
     auto tileset = new Tileset();
     tileset->name = name;
     tileset->is_secondary = secondary;
+    for (const auto *layout : this->mapLayouts) {
+        if (layout->customData.contains("layout_version")) {
+            tileset->attributesVersion = frlgLayoutContext ? BaseGameVersion::pokefirered : BaseGameVersion::pokeemerald;
+            break;
+        }
+    }
 
     // Create tileset directories
     const QString fullDirectoryPath = QString("%1/%2").arg(this->root).arg(tileset->getExpectedDir());
@@ -2338,6 +2383,10 @@ bool Project::readFieldmapProperties() {
     const QString mapOffsetHeightName = projectConfig.getIdentifier(ProjectIdentifier::define_map_offset_height);
 
     const QString filename = projectConfig.getFilePath(ProjectFilePath::constants_fieldmap);
+    const auto frlgDefines = parser.readCDefinesByName(filename, {"NUM_TILES_IN_PRIMARY_FRLG", "NUM_METATILES_IN_PRIMARY_FRLG", "NUM_PALS_IN_PRIMARY_FRLG"});
+    num_tiles_primary_frlg = qBound(1, frlgDefines.value("NUM_TILES_IN_PRIMARY_FRLG", 640), 1023);
+    num_metatiles_primary_frlg = qBound(1, frlgDefines.value("NUM_METATILES_IN_PRIMARY_FRLG", 640), 1023);
+    num_pals_primary_frlg = qBound(1, frlgDefines.value("NUM_PALS_IN_PRIMARY_FRLG", 7), 15);
     watchFile(filename);
     const auto defines = parser.readCDefinesByName(filename, { numTilesPrimaryName,
                                                                numTilesTotalName,
@@ -2533,7 +2582,7 @@ bool Project::readFieldmapMasks() {
 
     // Read #defines for encounter and terrain types to populate in the Tileset Editor dropdowns (if necessary)
     QString error;
-    if (projectConfig.metatileEncounterTypeMask) {
+    if (projectConfig.metatileEncounterTypeMask || !mapLayouts.isEmpty()) {
         const auto defines = parser.readCDefinesByRegex(globalFieldmap, {projectConfig.getIdentifier(ProjectIdentifier::regex_encounter_types)}, &error);
         if (!error.isEmpty()) {
             logWarn(QString("Failed to read encounter type constants from '%1': %2").arg(globalFieldmap).arg(error));
@@ -2544,7 +2593,7 @@ bool Project::readFieldmapMasks() {
             }
         }
     }
-    if (projectConfig.metatileTerrainTypeMask) {
+    if (projectConfig.metatileTerrainTypeMask || !mapLayouts.isEmpty()) {
         const auto defines = parser.readCDefinesByRegex(globalFieldmap, {projectConfig.getIdentifier(ProjectIdentifier::regex_terrain_types)}, &error);
         if (!error.isEmpty()) {
             logWarn(QString("Failed to read terrain type constants from '%1': %2").arg(globalFieldmap).arg(error));

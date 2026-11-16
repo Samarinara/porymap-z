@@ -302,7 +302,7 @@ int MainWindow::getBorderHeight() {
 }
 
 void MainWindow::setBorderDimensions(int width, int height) {
-    if (!this->editor || !this->editor->layout || !projectConfig.useCustomBorderSize)
+    if (!this->editor || !this->editor->layout || !this->editor->layout->hasCustomBorderSize())
         return;
     if (width < 1 || height < 1 || width > MAX_BORDER_WIDTH || height > MAX_BORDER_HEIGHT)
         return;
@@ -312,7 +312,7 @@ void MainWindow::setBorderDimensions(int width, int height) {
 }
 
 void MainWindow::setBorderWidth(int width) {
-    if (!this->editor || !this->editor->layout || !projectConfig.useCustomBorderSize)
+    if (!this->editor || !this->editor->layout || !this->editor->layout->hasCustomBorderSize())
         return;
     if (width < 1 || width > MAX_BORDER_WIDTH)
         return;
@@ -322,7 +322,7 @@ void MainWindow::setBorderWidth(int width) {
 }
 
 void MainWindow::setBorderHeight(int height) {
-    if (!this->editor || !this->editor->layout || !projectConfig.useCustomBorderSize)
+    if (!this->editor || !this->editor->layout || !this->editor->layout->hasCustomBorderSize())
         return;
     if (height < 1 || height > MAX_BORDER_HEIGHT)
         return;

@@ -168,6 +168,7 @@ public:
     bool loadMapEvent(Map *map, QJsonObject json, Event::Type defaultType = Event::Type::None);
     bool loadMapData(Map*);
     bool readMapLayouts();
+    bool saveMapLayouts();
     bool loadLayoutTilesets(Layout *);
     bool loadTilesetAssets(Tileset*);
     void loadTilesetMetatileLabels(Tileset*);
@@ -263,13 +264,14 @@ public:
     static QString getEmptySpeciesName();
     static QMargins getPixelViewDistance();
     static QMargins getMetatileViewDistance();
-    static int getNumTilesPrimary() { return num_tiles_primary; }
+    static void setLayoutContext(const Layout *layout) { frlgLayoutContext = layout && layout->customData.value("layout_version").toString() == "frlg"; }
+    static int getNumTilesPrimary(BaseGameVersion version = BaseGameVersion::none) { return (version == BaseGameVersion::pokefirered || (version == BaseGameVersion::none && frlgLayoutContext)) ? num_tiles_primary_frlg : num_tiles_primary; }
     static int getNumTilesTotal() { return num_tiles_total; }
     static int getNumTilesSecondary() { return getNumTilesTotal() - getNumTilesPrimary(); }
-    static int getNumMetatilesPrimary() { return num_metatiles_primary; }
+    static int getNumMetatilesPrimary(BaseGameVersion version = BaseGameVersion::none) { return (version == BaseGameVersion::pokefirered || (version == BaseGameVersion::none && frlgLayoutContext)) ? num_metatiles_primary_frlg : num_metatiles_primary; }
     static int getNumMetatilesTotal() { return Block::getMaxMetatileId() + 1; }
     static int getNumMetatilesSecondary() { return getNumMetatilesTotal() - getNumMetatilesPrimary(); }
-    static int getNumPalettesPrimary(){ return num_pals_primary; }
+    static int getNumPalettesPrimary(BaseGameVersion version = BaseGameVersion::none) { return (version == BaseGameVersion::pokefirered || (version == BaseGameVersion::none && frlgLayoutContext)) ? num_pals_primary_frlg : num_pals_primary; }
     static int getNumPalettesTotal() { return num_pals_total; }
     static int getNumPalettesSecondary() { return getNumPalettesTotal() - getNumPalettesPrimary(); }
     static QString getEmptyMapsecName();
@@ -352,7 +354,6 @@ private:
     void logFileWatchStatus();
     void cacheTileset(const QString &label, Tileset *tileset);
 
-    bool saveMapLayouts();
     bool saveMapGroups();
     bool saveWildMonData();
     bool saveHealLocations();
@@ -369,6 +370,10 @@ private:
     //       We're making an assumption here that we only have one project open at a single time
     //       (which is true, but then if that's the case we should have some global Project instance instead)
     static int num_tiles_primary;
+    static bool frlgLayoutContext;
+    static int num_tiles_primary_frlg;
+    static int num_metatiles_primary_frlg;
+    static int num_pals_primary_frlg;
     static int num_tiles_total;
     static int num_metatiles_primary;
     static int num_pals_primary;

@@ -46,6 +46,7 @@ public:
     Tileset *tileset_secondary = nullptr;
 
     QJsonObject customData;
+    bool hasCustomBorderSize() const;
 
     Blockdata blockdata;
 

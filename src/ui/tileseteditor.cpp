@@ -140,8 +140,11 @@ void TilesetEditor::initAttributesUi() {
     connect(ui->comboBox_TerrainType,       &NoScrollComboBox::editingFinished, this, &TilesetEditor::commitTerrainType);
     connect(ui->comboBox_LayerType,         &NoScrollComboBox::editingFinished, this, &TilesetEditor::commitLayerType);
 
+    Metatile format;
+    format.setAttributesVersion(primaryTileset->attributesVersion);
+
     // Behavior
-    if (projectConfig.metatileBehaviorMask) {
+    if (format.attributeMask(Metatile::Attr::Behavior)) {
         for (auto i = project->metatileBehaviorMapInverse.constBegin(); i != project->metatileBehaviorMapInverse.constEnd(); i++) {
             this->ui->comboBox_MetatileBehaviors->addItem(i.value(), i.key());
         }
@@ -151,7 +154,7 @@ void TilesetEditor::initAttributesUi() {
     }
 
     // Terrain Type
-    if (projectConfig.metatileTerrainTypeMask) {
+    if (format.attributeMask(Metatile::Attr::TerrainType)) {
         for (auto i = project->terrainTypeToName.constBegin(); i != project->terrainTypeToName.constEnd(); i++) {
             this->ui->comboBox_TerrainType->addItem(i.value(), i.key());
         }
@@ -161,7 +164,7 @@ void TilesetEditor::initAttributesUi() {
     }
 
     // Encounter Type
-    if (projectConfig.metatileEncounterTypeMask) {
+    if (format.attributeMask(Metatile::Attr::EncounterType)) {
         for (auto i = project->encounterTypeToName.constBegin(); i != project->encounterTypeToName.constEnd(); i++) {
             this->ui->comboBox_EncounterType->addItem(i.value(), i.key());
         }
@@ -177,7 +180,7 @@ void TilesetEditor::initAttributesUi() {
         this->ui->comboBox_LayerType->addItem("Split - Bottom/Top",      Metatile::LayerType::Split);
         this->ui->comboBox_LayerType->setEditable(false);
         this->ui->comboBox_LayerType->setMinimumContentsLength(0);
-        if (!projectConfig.metatileLayerTypeMask) {
+        if (!format.attributeMask(Metatile::Attr::LayerType)) {
             // User doesn't have triple layer metatiles, but has no layer type attribute.
             // Porymap is still using the layer type value to render metatiles, and with
             // no mask set every metatile will be "Middle/Top", so just display the combo

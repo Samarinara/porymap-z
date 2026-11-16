@@ -43,6 +43,9 @@ public:
     void setAttributes(uint32_t data);
     void setAttributes(uint32_t data, BaseGameVersion version);
     void setAttribute(Metatile::Attr attr, uint32_t value);
+    // Mixed-format expansion projects retain the format of each tileset.
+    void setAttributesVersion(BaseGameVersion version) { m_attributesVersion = version; }
+    uint32_t attributeMask(Metatile::Attr attr) const;
 
     // For convenience
     uint32_t behavior()      const { return this->getAttribute(Attr::Behavior); }
@@ -80,6 +83,7 @@ public:
     }
 
 private:
+    BaseGameVersion m_attributesVersion = BaseGameVersion::none;
     QMap<Metatile::Attr, uint32_t> attributes;
 };
 

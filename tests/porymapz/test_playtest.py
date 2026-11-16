@@ -158,6 +158,64 @@ void CB2_NewGame(void) {
         self.assertIn('MAP_NUM(MAP_ROUTE105), -1, -1, -1',
                       (self.root / 'src/new_game.c').read_text())
 
+    @unittest.skipUnless(shutil.which('cc'), 'Requires a C compiler')
+    def test_frlg_rival_name_does_not_read_unterminated_fresh_save(self):
+        path = self.root / 'src/new_game.c'
+        path.write_text('''
+#include "global.h"
+void NewGameInitData(void) {
+#if IS_FRLG
+    u8 rivalName[8];
+    StringCopy(rivalName, gSaveBlock1Ptr->rivalName);
+#endif
+    ClearSav1();
+#if IS_FRLG
+    StringCopy(gSaveBlock1Ptr->rivalName, rivalName);
+#endif
+}
+''')
+        playtest.patch_project(self.root, self.config)
+        source = path.read_text()
+        start, _ = playtest.function_span(source, 'NewGameInitData')
+        initialization = source[start + 1:source.index('/* Porymap disposable demo character. */')]
+        # Execute the patched preservation code with a fresh zero-filled save.
+        # The bounded copy fails if it reads a name without the game's EOS byte.
+        harness = self.root / 'rival.c'
+        harness.write_text('''
+#include <stdlib.h>
+#include <string.h>
+typedef unsigned char u8;
+#define _(text) {text "\\xff"}
+struct Save1 { u8 rivalName[8]; } save;
+struct Save1 *gSaveBlock1Ptr = &save;
+void StringCopy(u8 *dest, const u8 *src) {
+    for (unsigned i = 0; i < 8; ++i) {
+        dest[i] = src[i];
+        if (src[i] == 0xff) return;
+    }
+    exit(42);
+}
+void ClearSav1(void) { memset(&save, 0, sizeof(save)); }
+void initialize(void) {
+''' + initialization + '''
+}
+int main(void) {
+    initialize();
+#if IS_FRLG
+    return memcmp(save.rivalName, "RIVAL\\xff", 6) != 0;
+#else
+    return 0;
+#endif
+}
+''')
+        for frlg in (0, 1):
+            with self.subTest(IS_FRLG=frlg):
+                binary = self.root / 'rival-test'
+                subprocess.run(['cc', '-std=c99', f'-DIS_FRLG={frlg}', str(harness),
+                                '-o', str(binary)], check=True, capture_output=True, timeout=20)
+                result = subprocess.run([str(binary)], capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, 0, 'Rival copy read an unterminated name')
+
     def test_expansion_modern_pokemon_creation_and_party_storage(self):
         (self.root / 'include').mkdir()
         (self.root / 'include/pokemon.h').write_text(
@@ -190,6 +248,37 @@ void CB2_NewGame(void) {
         self.config['name'] = '"; Bad();'
         with self.assertRaises(ValueError):
             playtest.patch_project(self.root, self.config)
+
+    def test_expansion_build_targets_keep_release_goal(self):
+        for target in playtest.BUILD_TARGETS:
+            with self.subTest(target=target):
+                config = dict(self.config, build_target=target, make_args=['release', 'LTO=0'])
+                self.assertEqual(playtest.build_arguments(config),
+                                 [f'BUILD={target}', 'release', 'LTO=0'])
+        self.assertEqual(playtest.build_arguments(dict(self.config, make_args=['modern'])), ['modern'])
+
+    def test_explicit_target_rejects_conflicting_game_arguments(self):
+        for arg in ('emerald', 'firered', 'leafgreen', 'BUILD=emerald',
+                    'GAME_VERSION=EMERALD', 'MAP_VERSION=emerald', 'BUILD_NAME=emerald'):
+            with self.subTest(arg=arg), self.assertRaisesRegex(ValueError, 'game selectors'):
+                playtest.build_arguments(dict(self.config, build_target='firered', make_args=[arg]))
+        with self.assertRaisesRegex(ValueError, 'Invalid build target'):
+            playtest.build_arguments(dict(self.config, build_target='unknown'))
+
+    def test_expansion_target_requires_map_from_matching_region(self):
+        maps = self.root / 'data/maps'
+        for name, region in [('Route101', 'REGION_HOENN'), ('PalletTown_Frlg', 'REGION_KANTO')]:
+            folder = maps / name
+            folder.mkdir(parents=True)
+            (folder / 'map.json').write_text(json.dumps(dict(id='MAP_' + name.upper(), region=region)))
+        for target in playtest.BUILD_TARGETS:
+            for map_id in ('MAP_ROUTE101', 'MAP_PALLETTOWN_FRLG'):
+                config = dict(self.config, build_target=target, map=map_id)
+                if (target == 'emerald') == (map_id == 'MAP_ROUTE101'):
+                    playtest.validate_target_map(self.root, config)
+                else:
+                    with self.assertRaisesRegex(ValueError, 'not included'):
+                        playtest.validate_target_map(self.root, config)
 
     def test_snapshot_excludes_real_save_and_rom(self):
         (self.root / 'normal.sav').write_text('private save')
@@ -225,10 +314,11 @@ void CB2_NewGame(void) {
         with self.assertRaisesRegex(ValueError, 'symlinks'):
             playtest.copy_project(self.root, Path(self.temp.name) / 'snapshot')
 
-    def run_helper(self, fail=False):
+    def run_helper(self, fail=False, target=''):
         # A real make invocation and executable emulate the boundary without a GBA toolchain.
         (self.root / 'Makefile').write_text(
-            'all:\n\ttest -f .histignore\n\t' + ('false' if fail else 'touch demo.gba') + '\n')
+            'all:\n\ttest -f .histignore\n\t' + ('false' if fail else
+            ('test "$(BUILD)" = "' + target + '" && touch poke$(BUILD).gba' if target else 'touch demo.gba')) + '\n')
         record = Path(self.temp.name) / 'emulator-input.json'
         emulator = Path(self.temp.name) / 'fake emulator'
         emulator.write_text('#!' + sys.executable + '\nimport json, pathlib, sys\n'
@@ -236,6 +326,7 @@ void CB2_NewGame(void) {
                             + 'source=pathlib.Path("src/new_game.c").read_text())))\n')
         emulator.chmod(0o755)
         self.config['emulator'] = str(emulator)
+        self.config['build_target'] = target
         config_path = Path(self.temp.name) / 'config.json'
         config_path.write_text(json.dumps(self.config))
         result = subprocess.run([sys.executable, str(HELPER), str(config_path)],
@@ -282,6 +373,14 @@ void CB2_NewGame(void) {
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Demo build failed', result.stderr)
         self.assertFalse(record.exists())
+
+    @unittest.skipIf(os.name != 'posix', 'POSIX executable fixture')
+    def test_all_expansion_targets_reach_make_and_emulator(self):
+        for target in playtest.BUILD_TARGETS:
+            with self.subTest(target=target):
+                result, record = self.run_helper(target=target)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(Path(json.loads(record.read_text())['rom']).name, f'poke{target}.gba')
 
 
 if __name__ == '__main__':

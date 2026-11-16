@@ -30,7 +30,7 @@ public:
 
 private:
     Ui::NewLayoutForm *ui;
-    Project *m_project;
+    Project *m_project = nullptr;
 
     bool validateMapDimensions();
     bool validatePrimaryTileset(bool allowEmpty = false);

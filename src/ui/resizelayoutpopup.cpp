@@ -80,7 +80,7 @@ void ResizeLayoutPopup::setupLayoutView() {
     if (!this->layout || !this->project) return;
 
     // Border stuff
-    if (projectConfig.useCustomBorderSize) {
+    if (this->layout->hasCustomBorderSize()) {
         this->ui->spinBox_borderWidth->setMinimum(1);
         this->ui->spinBox_borderHeight->setMinimum(1);
         this->ui->spinBox_borderWidth->setMaximum(MAX_BORDER_WIDTH);

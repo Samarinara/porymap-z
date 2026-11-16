@@ -89,6 +89,21 @@ symlinks are rejected to protect the original files. Optional build arguments
 copy and build can take a while and need enough temporary disk space for the
 project. Normal map scripts still run, including any map-specific story events.
 
+For current **pokeemerald-expansion**, choose **Emerald**, **FireRed**, or
+**LeafGreen** in Play’s **Build target** field. Emerald uses Hoenn maps;
+FireRed and LeafGreen use Kanto maps (such as `PalletTown_Frlg`). The target is
+remembered per project. **Project default** keeps the existing Makefile/build
+arguments behavior. With an explicit target, use Build arguments for options
+such as `release` or `LTO=0`, and remove game selectors such as `firered` or
+`BUILD=leafgreen` from that field.
+
+Keep expansion’s project **base_game_version** set to **pokeemerald** for all
+three ROM targets. The editor reads each layout’s `layout_version` metadata to
+handle Emerald and FRLG border dimensions, tile/palette splits, and 16/32-bit
+metatile attributes together. Existing `region` and `layout_version` fields are
+preserved when saving; new layouts/maps inherit their primary tileset’s format
+and region. Changing the ROM build target does not change the project’s data format.
+
 To verify Play against a real game checkout using its normal toolchain, run:
 
 ```sh
@@ -101,3 +116,37 @@ and checksum, exports the ROM and build artifacts, and verifies that the origina
 startup sources are unchanged. It uses a ROM checker in place of the emulator;
 it does not test gameplay. Use `--make-arg=modern` or other repeated
 `--make-arg=...` options when the project needs additional build arguments.
+
+To check startup in mGBA as well, build the headless checker against an mGBA
+source checkout (requires CMake and a native C/C++ compiler):
+
+```sh
+cmake -S tests/porymapz/boot -B build/playtest-boot -DMGBA_SOURCE_DIR=/path/to/mgba
+cmake --build build/playtest-boot --target playtest_boot -j
+python3 tests/porymapz/verify_playtest_build.py /path/to/pokeemerald-expansion \
+    --artifact-dir build/playtest-verification \
+    --boot-checker build/playtest-boot/playtest_boot
+```
+
+The boot check runs 900 emulated frames from a fresh save and requires the
+overworld callbacks, selected map/tile, and a visible map image. It records
+`boot.json` and rejects black screens and startup hangs. This tests startup,
+not full gameplay. Existing exported artifacts can be checked without rebuilding
+the ROM using `verify_playtest_boot.py ARTIFACT_DIR --checker CHECKER_PATH`.
+
+Verify each expansion ROM target with:
+
+```sh
+python3 tests/porymapz/verify_playtest_build.py /path/to/pokeemerald-expansion \
+    --build-target emerald --map MAP_ROUTE105 --artifact-dir build/verify-emerald
+python3 tests/porymapz/verify_playtest_build.py /path/to/pokeemerald-expansion \
+    --build-target firered --map MAP_PALLET_TOWN --artifact-dir build/verify-firered
+python3 tests/porymapz/verify_playtest_build.py /path/to/pokeemerald-expansion \
+    --build-target leafgreen --map MAP_PALLET_TOWN --artifact-dir build/verify-leafgreen
+```
+
+Explicit-target verification also checks the GBA game code (`BPEE`, `BPRE`, or
+`BPGE`). Run `python3 -m unittest discover -s tests/porymapz -p test_playtest.py`
+for launcher regressions. Set `PORYMAP_Z_EXPANSION_PROJECT=/path/to/pokeemerald-expansion`
+when running `tst_mainwindow` to check real Hoenn/Kanto map loading and byte-for-byte
+metatile attribute round trips, using temporary output files.

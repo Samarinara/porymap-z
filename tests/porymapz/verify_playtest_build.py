@@ -25,6 +25,10 @@ def main():
     parser.add_argument('project', type=Path)
     parser.add_argument('--artifact-dir', type=Path, required=True)
     parser.add_argument('--make-arg', action='append', default=[])
+    parser.add_argument('--build-target', choices=('emerald', 'firered', 'leafgreen'), default='')
+    parser.add_argument('--boot-checker', type=Path,
+                        help='Also boot the exported ROM using the headless mGBA checker')
+    parser.add_argument('--nm', default='arm-none-eabi-nm')
     parser.add_argument('--map', default='MAP_ROUTE105')
     parser.add_argument('--species', default='SPECIES_TREECKO')
     parser.add_argument('--name', default='DEMO')
@@ -52,6 +56,10 @@ if len(data) < 0xC0 or data[0xB2] != 0x96:
     raise SystemExit('Invalid GBA ROM header')
 if data[0xBD] != ((-sum(data[0xA0:0xBD]) - 0x19) & 0xFF):
     raise SystemExit('Invalid GBA ROM header checksum')
+expected_code = {{'emerald': 'BPEE', 'firered': 'BPRE', 'leafgreen': 'BPGE'}}.get({args.build_target!r})
+game_code = data[0xAC:0xB0].decode('ascii')
+if expected_code and game_code != expected_code:
+    raise SystemExit(f'Wrong game code: {{game_code}}, expected {{expected_code}}')
 artifacts = Path({str(artifacts)!r})
 shutil.copy2(rom, artifacts / rom.name)
 for suffix in ('.elf', '.map'):
@@ -59,11 +67,12 @@ for suffix in ('.elf', '.map'):
     if companion.exists():
         shutil.copy2(companion, artifacts / companion.name)
 (artifacts / 'rom.json').write_text(json.dumps(dict(
-    filename=rom.name, bytes=len(data), sha256=hashlib.sha256(data).hexdigest()), indent=2) + '\\n')
+    filename=rom.name, game_code=game_code, bytes=len(data), sha256=hashlib.sha256(data).hexdigest()), indent=2) + '\\n')
 print('Verified GBA ROM header and exported build artifacts.', flush=True)
 ''')
         emulator.chmod(0o755)
         config = dict(root=str(project), emulator=str(emulator), make_args=args.make_arg,
+                      build_target=args.build_target,
                       map=args.map, species=args.species, name=args.name, gender=args.gender,
                       level=args.level, x=args.x, y=args.y)
         config_path = temp / 'config.json'
@@ -76,6 +85,9 @@ print('Verified GBA ROM header and exported build artifacts.', flush=True)
         config.pop('emulator')
         config['source_hashes'] = original
         (artifacts / 'configuration.json').write_text(json.dumps(config, indent=2) + '\n')
+        if args.boot_checker:
+            from verify_playtest_boot import verify_boot
+            verify_boot(artifacts, args.boot_checker, args.nm)
         print(f'Play build passed; original game sources unchanged. Artifacts: {artifacts}')
 
 

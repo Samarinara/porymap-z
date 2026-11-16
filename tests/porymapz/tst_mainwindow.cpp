@@ -13,6 +13,12 @@
 #include "mainwindow.h"
 #include "porymapz/dialogueeditor.h"
 #include "porymapz/battleeditor.h"
+#include "project.h"
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QScopeGuard>
+#include "loadingscreen.h"
+#include "playtest.h"
 
 class MainWindowTest : public QObject {
     Q_OBJECT
@@ -30,7 +36,11 @@ private slots:
         auto *playToolbar = window.findChild<QToolBar *>("playtestToolBar");
         QVERIFY(play && playToolbar);
         QVERIFY(playToolbar->actions().contains(play));
-        // Play must explain the missing project instead of entering selection mode.
+        // The toolbar is disabled without a project; the controller also guards
+        // direct calls so they cannot enter tile selection.
+        QVERIFY(!play->isEnabled());
+        auto *playtest = window.findChild<Playtest *>();
+        QVERIFY(playtest);
         bool sawMissingProject = false;
         QTimer::singleShot(0, &window, [&] {
             auto *message = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
@@ -39,7 +49,7 @@ private slots:
                 message->accept();
             }
         });
-        play->trigger();
+        playtest->configure();
         QVERIFY(sawMissingProject);
         QCOMPARE(tabs->tabText(MainTab::Dialogue), QString("Dialogue"));
         QCOMPARE(pages->widget(4), static_cast<QWidget *>(dialogue));
@@ -89,6 +99,147 @@ private slots:
         QVERIFY(records->currentItem());
         QCOMPARE(records->currentItem()->toolTip(), QString("[TRAINER_TEST]"));
     }
+    void expansionEngineDetection() {
+        QTemporaryDir dir;
+        const auto root = dir.filePath("pokefirered");
+        QVERIFY(QDir().mkpath(root + "/include/config"));
+        QFile general(root + "/include/config/general.h");
+        QVERIFY(general.open(QIODevice::WriteOnly));
+        general.write("#define RHH_EXPANSION\n");
+        general.close();
+        ProjectConfig config;
+        QVERIFY(config.load(root));
+        QCOMPARE(config.baseGameVersion, BaseGameVersion::pokeemerald);
+    }
+
+    void mixedExpansionFormats() {
+        QTemporaryDir dir;
+        QVERIFY(QDir(dir.path()).mkpath("data/layouts"));
+        const auto oldRoot = projectConfig.root();
+        projectConfig.setRoot(dir.path());
+        Project project;
+        project.setRoot(dir.path());
+        QFile layouts(dir.filePath("data/layouts/layouts.json"));
+        QVERIFY(layouts.open(QIODevice::WriteOnly));
+        layouts.write(R"({"layouts_table_label":"gMapLayouts","layouts":[
+          {"id":"LAYOUT_HOENN","name":"Hoenn_Layout","width":3,"height":4,
+           "layout_version":"emerald","primary_tileset":"gTileset_General","secondary_tileset":"gTileset_Petalburg",
+           "border_filepath":"hoenn.bin","blockdata_filepath":"hoenn-map.bin"},
+          {"id":"LAYOUT_KANTO","name":"Kanto_Layout","width":5,"height":6,
+           "layout_version":"frlg","border_width":4,"border_height":3,
+           "primary_tileset":"gTileset_GeneralFrlg","secondary_tileset":"gTileset_PalletTown",
+           "border_filepath":"kanto.bin","blockdata_filepath":"kanto-map.bin"}]})");
+        layouts.close();
+        QVERIFY(project.readMapLayouts());
+        auto *hoenn = project.getLayout("LAYOUT_HOENN");
+        auto *kanto = project.getLayout("LAYOUT_KANTO");
+        QVERIFY(hoenn && kanto);
+        QCOMPARE(hoenn->getBorderWidth(), 2);
+        QCOMPARE(kanto->getBorderWidth(), 4);
+        QCOMPARE(kanto->getBorderHeight(), 3);
+        QVERIFY(kanto->hasCustomBorderSize());
+        QVERIFY(project.saveMapLayouts());
+        QVERIFY(layouts.open(QIODevice::ReadOnly));
+        const auto saved = QJsonDocument::fromJson(layouts.readAll()).object()["layouts"].toArray();
+        QCOMPARE(saved[0].toObject()["layout_version"].toString(), QString("emerald"));
+        QCOMPARE(saved[1].toObject()["layout_version"].toString(), QString("frlg"));
+        QCOMPARE(saved[1].toObject()["border_width"].toInt(), 4);
+
+        Tileset emerald, frlg;
+        emerald.attributesVersion = BaseGameVersion::pokeemerald;
+        frlg.attributesVersion = BaseGameVersion::pokefirered;
+        emerald.resizeMetatiles(2);
+        frlg.resizeMetatiles(2);
+        emerald.metatile_attrs_path = dir.filePath("emerald-attributes.bin");
+        frlg.metatile_attrs_path = dir.filePath("frlg-attributes.bin");
+        const QByteArray emeraldBytes = QByteArray::fromHex("01a023b0");
+        const QByteArray frlgBytes = QByteArray::fromHex("ff3f009802020067");
+        for (const auto &pair : {qMakePair(emerald.metatile_attrs_path, emeraldBytes),
+                                 qMakePair(frlg.metatile_attrs_path, frlgBytes)}) {
+            QFile file(pair.first);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(pair.second), qint64(pair.second.size()));
+        }
+        QVERIFY(emerald.loadMetatileAttributes());
+        QVERIFY(frlg.loadMetatileAttributes());
+        QCOMPARE(frlg.metatileAt(0)->behavior(), uint32_t(511));
+        QCOMPARE(frlg.metatileAt(0)->terrainType(), uint32_t(31));
+        QCOMPARE(frlg.metatileAt(1)->encounterType(), uint32_t(7));
+        QCOMPARE(frlg.metatileAt(1)->layerType(), uint32_t(3));
+        for (const auto *context : {kanto, hoenn, kanto}) {
+            Project::setLayoutContext(context);
+            QVERIFY(emerald.saveMetatileAttributes());
+            QVERIFY(frlg.saveMetatileAttributes());
+            QFile e(emerald.metatile_attrs_path), f(frlg.metatile_attrs_path);
+            QVERIFY(e.open(QIODevice::ReadOnly)); QVERIFY(f.open(QIODevice::ReadOnly));
+            QCOMPARE(e.readAll(), emeraldBytes);
+            QCOMPARE(f.readAll(), frlgBytes);
+            QCOMPARE(Project::getNumMetatilesPrimary(), context == kanto ? 640 : 512);
+        }
+        Tileset frlgSecondary(frlg);
+        frlg.is_secondary = false;
+        frlgSecondary.is_secondary = true;
+        Project::setLayoutContext(hoenn);
+        QCOMPARE(Tileset::getMetatile(640, &frlg, &frlgSecondary), frlgSecondary.metatileAt(0));
+        QCOMPARE(Tileset::getMetatile(512, &frlg, &frlgSecondary), nullptr);
+        QCOMPARE(frlgSecondary.firstTileId(), uint16_t(640));
+        QCOMPARE(frlg.primaryPaletteCount(), 7);
+        const auto originalAttributes = frlg.metatileAt(0)->getAttributes();
+        frlg.metatiles().at(0)->setBehavior(1);
+        QCOMPARE(frlg.metatileAt(0)->getAttributes(), (originalAttributes & ~uint32_t(0x1FF)) | 1);
+        Tileset copy(frlg);
+        QCOMPARE(copy.attributesSize(), 4);
+        QCOMPARE(copy.metatileAt(0)->getAttributes(), frlg.metatileAt(0)->getAttributes());
+        Project::setLayoutContext(nullptr);
+        projectConfig.setRoot(oldRoot);
+    }
+
+    void expansionCorpus() {
+        const auto root = qEnvironmentVariable("PORYMAP_Z_EXPANSION_PROJECT");
+        if (root.isEmpty()) QSKIP("Set PORYMAP_Z_EXPANSION_PROJECT for real mixed-format map and tileset checks.");
+        const auto oldRoot = projectConfig.root();
+        PorymapLoadingScreen splash;
+        auto *previousSplash = porysplash;
+        porysplash = &splash;
+        const auto restore = qScopeGuard([&] { porysplash = previousSplash; projectConfig.setRoot(oldRoot); });
+        projectConfig.setRoot(root);
+        Project project;
+        project.setRoot(root);
+        QVERIFY(project.load());
+        QTemporaryDir output;
+        for (const auto &name : {QString("Route105"), QString("PalletTown_Frlg")}) {
+            auto *map = project.loadMap(name);
+            QVERIFY2(map, qPrintable(name));
+            auto *layout = map->layout();
+            QVERIFY(layout);
+            for (auto *tileset : {layout->tileset_primary, layout->tileset_secondary}) {
+                QFile original(tileset->metatile_attrs_path);
+                QVERIFY(original.open(QIODevice::ReadOnly));
+                const auto bytes = original.readAll();
+                const auto path = tileset->metatile_attrs_path;
+                tileset->metatile_attrs_path = output.filePath(tileset->name + ".bin");
+                QVERIFY(tileset->saveMetatileAttributes());
+                QFile saved(tileset->metatile_attrs_path);
+                QVERIFY(saved.open(QIODevice::ReadOnly));
+                QCOMPARE(saved.readAll(), bytes);
+                tileset->metatile_attrs_path = path;
+            }
+            QVERIFY(!layout->render(true).isNull());
+        }
+        auto settings = project.newMapSettings;
+        settings.name = "PorymapKantoTest";
+        settings.group = project.mapNameToMapGroup("PalletTown_Frlg");
+        settings.layout = project.getMap("PalletTown_Frlg")->layout()->settings();
+        settings.layout.id = "LAYOUT_PORYMAP_KANTO_TEST";
+        settings.layout.name = "PorymapKantoTest_Layout";
+        auto *created = project.createNewMap(settings);
+        QVERIFY(created);
+        QCOMPARE(created->customAttributes()["region"].toString(), QString("REGION_KANTO"));
+        QCOMPARE(created->layout()->customData["layout_version"].toString(), QString("frlg"));
+        projectConfig.setRoot(oldRoot);
+    }
+
+
 };
 QTEST_MAIN(MainWindowTest)
 #include "tst_mainwindow.moc"

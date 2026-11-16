@@ -11,6 +11,11 @@
 QList<int> Layout::s_globalMetatileLayerOrder;
 QList<float> Layout::s_globalMetatileLayerOpacity;
 
+bool Layout::hasCustomBorderSize() const {
+    const auto version = customData.value("layout_version").toString();
+    return version.isEmpty() ? projectConfig.useCustomBorderSize : version == "frlg";
+}
+
 Layout::Layout(const Layout &other) : Layout() {
     copyFrom(&other);
 }

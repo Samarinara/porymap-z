@@ -18,6 +18,19 @@ NewLayoutForm::NewLayoutForm(QWidget *parent)
 
     connect(ui->comboBox_PrimaryTileset,   &NoScrollComboBox::editingFinished, [this]{ validatePrimaryTileset(true); });
     connect(ui->comboBox_SecondaryTileset, &NoScrollComboBox::editingFinished, [this]{ validateSecondaryTileset(true); });
+    connect(ui->comboBox_PrimaryTileset, &QComboBox::currentTextChanged, this, [this](const QString &label) {
+        bool customBorder = projectConfig.useCustomBorderSize;
+        if (m_project) {
+            for (const auto &id : m_project->layoutIds()) {
+                const auto *layout = m_project->getLayout(id);
+                if (layout && layout->tileset_primary_label == label) {
+                    customBorder = layout->hasCustomBorderSize();
+                    break;
+                }
+            }
+        }
+        ui->groupBox_BorderDimensions->setVisible(customBorder);
+    });
 }
 
 NewLayoutForm::~NewLayoutForm()

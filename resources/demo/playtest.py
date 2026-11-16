@@ -12,6 +12,39 @@ import sys
 import tempfile
 
 
+BUILD_TARGETS = ('emerald', 'firered', 'leafgreen')
+
+
+def build_arguments(config):
+    args = list(config.get('make_args', []))
+    target = config.get('build_target', '')
+    if not target:
+        return args
+    if target not in BUILD_TARGETS:
+        raise ValueError('Invalid build target. Choose Emerald, FireRed, or LeafGreen.')
+    # BUILD also works with goals such as release. Expansion compares the entire
+    # MAKECMDGOALS string, so appending "firered" to other goals is insufficient.
+    for arg in args:
+        if arg in BUILD_TARGETS or re.match(
+                r'^(BUILD|GAME_VERSION|BUILD_NAME|MAP_VERSION|TITLE|GAME_CODE)\s*[:?+]?=', arg):
+            raise ValueError('Remove game selectors from Build arguments when choosing a build target.')
+    return [f'BUILD={target}', *args]
+
+
+def validate_target_map(root, config):
+    target = config.get('build_target', '')
+    if not target:
+        return
+    region = 'REGION_HOENN' if target == 'emerald' else 'REGION_KANTO'
+    for path in (Path(root) / 'data/maps').glob('*/map.json'):
+        data = json.loads(path.read_text())
+        if data.get('id') == config['map']:
+            if data.get('region', region) != region:
+                raise ValueError(f"{config['map']} is not included in the {target} build. "
+                                 'Choose a map from the target game’s region.')
+            return
+
+
 def function_span(source, name):
     # Mask comments and literals so braces inside them do not affect nesting.
     masked = re.sub(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'',
@@ -77,6 +110,14 @@ def patch_project(root, config):
     # It must initialize an array rather than appear as a function argument.
     trainer_name = f'\n    static const u8 sPorymapDemoTrainerName[] = _("{name}");\n'
     new_game = new_game[:start + 1] + trainer_name + new_game[start + 1:]
+    # FRLG normally gets a terminated rival name from the naming intro. A fresh
+    # demo save contains zeros instead of EOS, so preserving that name with
+    # StringCopy would overrun the local name buffer and corrupt the stack.
+    new_game = re.sub(
+        r'\bStringCopy\s*\(\s*(\w+)\s*,\s*gSaveBlock1Ptr->rivalName\s*\)\s*;',
+        lambda match: ('{\n        static const u8 sPorymapDemoRivalName[] = _("RIVAL");\n'
+                       f'        StringCopy({match[1]}, sPorymapDemoRivalName);\n    }}'),
+        new_game)
     _, end = function_span(new_game, 'NewGameInitData')
     pokemon_header = root / 'include' / 'pokemon.h'
     pokemon_api = pokemon_header.read_text() if pokemon_header.exists() else ''
@@ -147,6 +188,8 @@ def main():
     parser.add_argument('config')
     args = parser.parse_args()
     config = json.loads(Path(args.config).read_text())
+    make_args = build_arguments(config)
+    validate_target_map(config['root'], config)
     child = None
 
     def stop(signum, frame):
@@ -163,7 +206,7 @@ def main():
             copy_project(config['root'], project)
             patch_project(project, config)
             print('Building demo ROM (requires the project’s normal build toolchain)…', flush=True)
-            child = subprocess.Popen(['make', '-j2', *config.get('make_args', [])], cwd=project,
+            child = subprocess.Popen(['make', '-j2', *make_args], cwd=project,
                                      start_new_session=(os.name == 'posix'))
             if child.wait() != 0:
                 raise RuntimeError('Demo build failed. See the build output above.')

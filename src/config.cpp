@@ -1168,6 +1168,13 @@ void ProjectConfig::init() {
     QString dirName = QDir(this->projectDir()).dirName().toLower();
 
     BaseGameVersion version = stringToBaseGameVersion(dirName);
+    // Expansion's FireRed/LeafGreen ROM targets still use Emerald source
+    // structures. Detect the engine before considering the checkout's name.
+    QFile general(this->projectDir() + "/include/config/general.h");
+    if (general.open(QIODevice::ReadOnly)
+        && QRegularExpression("(?m)^\\s*#\\s*define\\s+RHH_EXPANSION\\b").match(QString::fromUtf8(general.readAll())).hasMatch()) {
+        version = BaseGameVersion::pokeemerald;
+    }
     if (version != BaseGameVersion::none) {
         this->baseGameVersion = version;
         logInfo(QString("Auto-detected base_game_version as '%1'").arg(getBaseGameVersionString(version)));

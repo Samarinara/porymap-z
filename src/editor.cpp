@@ -1349,6 +1349,7 @@ bool Editor::setLayout(QString layoutId) {
     }
 
     this->layout = loadedLayout;
+    Project::setLayoutContext(this->layout);
     if (!displayLayout()) {
         return false;
     }

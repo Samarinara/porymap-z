@@ -64,7 +64,7 @@ QString Metatile::getLayerName(int layerNum) {
 uint32_t Metatile::getAttributes() const {
     uint32_t data = 0;
     for (auto i = this->attributes.cbegin(), end = this->attributes.cend(); i != end; i++){
-        const auto packer = attributePackers.value(i.key());
+        const auto packer = BitPacker(attributeMask(i.key()));
         data |= packer.pack(i.value());
     }
     return data;
@@ -72,6 +72,12 @@ uint32_t Metatile::getAttributes() const {
 
 // Unpack and insert metatile attributes from the given data.
 void Metatile::setAttributes(uint32_t data) {
+    if (m_attributesVersion != BaseGameVersion::none) {
+        const auto packers = m_attributesVersion == BaseGameVersion::pokefirered ? attributePackersFRLG : attributePackersRSE;
+        for (auto i = packers.cbegin(); i != packers.cend(); ++i)
+            attributes.insert(i.key(), i.value().unpack(data));
+        return;
+    }
     for (auto i = attributePackers.cbegin(), end = attributePackers.cend(); i != end; i++){
         const auto packer = i.value();
         this->setAttribute(i.key(), packer.unpack(data));
@@ -89,8 +95,13 @@ void Metatile::setAttributes(uint32_t data, BaseGameVersion version) {
 
 // Set the value for a metatile attribute, and fit it within the valid value range.
 void Metatile::setAttribute(Metatile::Attr attr, uint32_t value) {
-    const auto packer = attributePackers.value(attr);
+    const auto packer = BitPacker(attributeMask(attr));
     this->attributes.insert(attr, packer.clamp(value));
+}
+
+uint32_t Metatile::attributeMask(Metatile::Attr attr) const {
+    return m_attributesVersion == BaseGameVersion::none ? attributePackers.value(attr).mask()
+        : getDefaultAttributesMask(m_attributesVersion, attr);
 }
 
 int Metatile::getDefaultAttributesSize(BaseGameVersion version) {

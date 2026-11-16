@@ -31,6 +31,11 @@ public:
     QString metatile_attrs_path;
     QString tilesImagePath;
     QStringList palettePaths;
+    BaseGameVersion attributesVersion = BaseGameVersion::none;
+    int primaryTileCount() const;
+    int primaryMetatileCount() const;
+    int primaryPaletteCount() const;
+    int attributesSize() const;
 
     QHash<int, QString> metatileLabels;
     QList<QList<QRgb>> palettes;
@@ -99,7 +104,7 @@ public:
     int numTiles() const { return m_tiles.length(); }
     int maxTiles() const;
 
-    QImage tileImage(uint16_t tileId) const { return m_tiles.value(Tile::getIndexInTileset(tileId)); }
+    QImage tileImage(uint16_t tileId) const { return m_tiles.value(tileId - firstTileId()); }
 
     QSet<int> getUnusedColorIds(int paletteId, const Tileset *pairedTileset, const QSet<int> &searchColors = {}) const;
     QList<uint16_t> findMetatilesUsingColor(int paletteId, int colorId, const Tileset *pairedTileset) const;
