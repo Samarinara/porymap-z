@@ -4,7 +4,8 @@
 
 namespace PorymapZ {
 // Source spans are QString indices. The lexer masks comments and strings before
-// finding delimiters, so commas/braces inside them never become structural edits.
+// finding C delimiters. Expansion .party files use line spans and block-comment
+// masking, preserving Showdown syntax without converting it to generated C.
 class BattleDocument {
 public:
     struct Node {
@@ -22,10 +23,15 @@ public:
     bool remove(int node);
     bool appendPokemon(int party);
     bool canResize(int node) const;
+    bool isPartySource() const { return m_partySource; }
+    bool isTrainer(int node) const;
+    bool isPokemon(int node) const;
+    QVector<int> pokemon(int record) const;
 private:
     int addNode(const QString &name, int start, int valueStart, int end, int parent);
     int matching(int start) const;
-    bool isPokemon(int node) const;
+    void parseParty();
+    bool m_partySource = false;
     QString m_source, m_mask, m_commentsMasked;
     QVector<Node> m_nodes;
     QVector<int> m_records;

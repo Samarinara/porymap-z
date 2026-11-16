@@ -43,7 +43,9 @@ QString fieldLabel(const QString &name) {
         {".party", QObject::tr("Party reference")}, {".items", QObject::tr("Battle items")},
         {".iv", QObject::tr("IV quality (0–255)")}, {".lvl", QObject::tr("Level")},
         {".species", QObject::tr("Species")}, {".heldItem", QObject::tr("Held item")},
-        {".moves", QObject::tr("Moves")}
+        {".moves", QObject::tr("Moves")}, {".ability", QObject::tr("Ability")},
+        {".nature", QObject::tr("Nature")}, {".ivs", QObject::tr("IVs (0–31 per stat)")},
+        {".evs", QObject::tr("EVs")}, {".battleType", QObject::tr("Battle format")}
     };
     return labels.value(name, name);
 }
@@ -59,9 +61,12 @@ public:
         if (index.column() != 1) return nullptr;
         const QString field = index.sibling(index.row(), 0).data(FieldRole).toString();
         const QString value = index.data(Qt::EditRole).toString();
-        if (field == ".doubleBattle" && (value == "TRUE" || value == "FALSE")) {
+        if ((field == ".doubleBattle" && (value == "TRUE" || value == "FALSE" || value == "Yes" || value == "No"))
+            || (field == ".battleType" && (value == "Singles" || value == "Doubles"))) {
             auto *combo = new QComboBox(parent);
-            combo->addItem(tr("Single battle"), "FALSE"); combo->addItem(tr("Double battle"), "TRUE");
+            const bool yesNo = value == "Yes" || value == "No";
+            combo->addItem(tr("Single battle"), field == ".battleType" ? "Singles" : yesNo ? "No" : "FALSE");
+            combo->addItem(tr("Double battle"), field == ".battleType" ? "Doubles" : yesNo ? "Yes" : "TRUE");
             auto *delegate = const_cast<BattleValueDelegate *>(this);
             connect(combo, QOverload<int>::of(&QComboBox::activated), delegate, [delegate, combo] {
                 emit delegate->commitData(combo); emit delegate->closeEditor(combo);
@@ -79,6 +84,8 @@ public:
             QString prefix;
             if (field == ".species") prefix = "SPECIES_";
             else if (field == ".heldItem") prefix = "ITEM_";
+            else if (field == ".ability") prefix = "ABILITY_";
+            else if (field == ".nature") prefix = "NATURE_";
             else if (field == ".trainerClass") prefix = "TRAINER_CLASS_";
             else if (field == ".trainerPic") prefix = "TRAINER_PIC_";
             else if (index.parent().data(FieldRole).toString() == ".moves") prefix = "MOVE_";
@@ -122,8 +129,8 @@ public:
     void initStyleOption(QStyleOptionViewItem *option, const QModelIndex &index) const override {
         QStyledItemDelegate::initStyleOption(option, index);
         if (index.column() == 1 && index.sibling(index.row(), 0).data(FieldRole).toString() == ".doubleBattle") {
-            if (option->text == "FALSE") option->text = tr("Single battle");
-            else if (option->text == "TRUE") option->text = tr("Double battle");
+            if (option->text == "FALSE" || option->text == "No") option->text = tr("Single battle");
+            else if (option->text == "TRUE" || option->text == "Yes") option->text = tr("Double battle");
         } else if (index.column() == 1 && index.sibling(index.row(), 0).data(FieldRole).toString() == ".trainerName") option->text = trainerName(option->text);
     }
 };
@@ -210,10 +217,10 @@ BattleEditor::BattleEditor(QWidget *parent) : QWidget(parent) {
     connect(m_locate, &QPushButton::clicked, this, [this] {
         const int kind = m_files->currentIndex();
         if (kind < 0 || !confirmChanges()) return;
-        const auto path = QFileDialog::getOpenFileName(this, tr("Locate Battle Data"), m_root, tr("C source (*.h *.c)"));
+        const auto path = QFileDialog::getOpenFileName(this, tr("Locate Battle Data"), m_root, tr("Trainer source (*.party *.h *.c)"));
         if (path.isEmpty()) return;
         if (!editable(path) || (kind < 2 && !containsData(path, kind))) {
-            m_status->setText(tr("Choose a C file inside this project containing %1. JSON, generated data, and custom formats need their own adapter.")
+            m_status->setText(tr("Choose a supported .party or C trainer file inside this project containing %1. Generated headers are not editable when .party source exists.")
                 .arg(kind == 0 ? tr("struct Trainer definitions") : tr("struct TrainerMon… parties")));
             return;
         }
@@ -267,13 +274,26 @@ BattleEditor::BattleEditor(QWidget *parent) : QWidget(parent) {
             m_status->setText(tr("Select a Pokémon party with fewer than six members first.")); return;
         }
         syncSource(); render(row);
-        const auto party = m_document.nodes().at(m_document.records().at(row));
-        if (!party.children.isEmpty()) {
-            auto *item = m_fields->topLevelItem(0)->child(party.children.size()-1);
+        const int record = m_document.records().at(row);
+        const auto party = m_document.nodes().at(record);
+        const auto members = m_document.pokemon(record);
+        if (!members.isEmpty()) {
+            auto *item = m_fields->topLevelItem(0)->child(party.children.indexOf(members.last()));
             m_fields->setCurrentItem(item); m_fields->scrollToItem(item);
         }
     });
     connect(goParty, &QPushButton::clicked, this, [this] {
+        if (m_document.isPartySource()) {
+            const int row = m_records->currentRow();
+            if (row < 0) return;
+            const auto members = m_document.pokemon(m_document.records().at(row));
+            if (!members.isEmpty()) {
+                auto *root = m_fields->topLevelItem(0);
+                const int child = m_document.nodes().at(m_document.records().at(row)).children.indexOf(members.first());
+                m_fields->setCurrentItem(root->child(child)); m_fields->scrollToItem(root->child(child));
+            }
+            return;
+        }
         const QString name = partyReference();
         if (name.isEmpty()) return;
         m_files->setCurrentIndex(1);
@@ -313,7 +333,10 @@ void BattleEditor::setDirty(bool dirty) {
 }
 bool BattleEditor::editable(const QString &path) const {
     const QFileInfo info(path);
-    return !m_root.isEmpty() && !info.isSymLink() && info.canonicalFilePath().startsWith(m_root + '/');
+    const bool generated = QFileInfo::exists(m_root + "/src/data/trainers.party")
+        && QStringList{"src/data/trainers.h", "src/data/trainer_parties.h", "src/data/trainers_frlg.h"}
+            .contains(QDir(m_root).relativeFilePath(info.absoluteFilePath()));
+    return !generated && !(info.suffix() == "h" && QFileInfo::exists(info.path() + "/" + info.completeBaseName() + ".party")) && !m_root.isEmpty() && !info.isSymLink() && info.canonicalFilePath().startsWith(m_root + '/');
 }
 bool BattleEditor::confirmChanges() {
     if (m_dirty) {
@@ -336,7 +359,7 @@ bool BattleEditor::setScene(const QString &root, const QString &map, const QStri
     m_root = canonical;
     auto *delegate = static_cast<BattleValueDelegate *>(m_fields->itemDelegate());
     delegate->constants = QStringList{"TRUE", "FALSE"};
-    for (const QString &name : QStringList{"species", "moves", "items", "trainers", "trainer_types", "battle_ai"}) {
+    for (const QString &name : QStringList{"species", "moves", "items", "trainers", "trainer_types", "battle_ai", "abilities", "pokemon"}) {
         QFile constants(m_root + "/include/constants/" + name + ".h");
         if (!m_root.isEmpty() && constants.open(QIODevice::ReadOnly)) {
             const auto source = QString::fromUtf8(constants.readAll());
@@ -347,9 +370,15 @@ bool BattleEditor::setScene(const QString &root, const QString &map, const QStri
     delegate->constants.removeDuplicates(); delegate->constants.sort();
     const bool available = !m_root.isEmpty() && !map.isEmpty() && supported;
     QSignalBlocker blocker(m_files); m_files->clear(); m_fileIndex = -1;
-    m_files->addItem(tr("Trainers"), resolveDataPath(0));
-    m_files->addItem(tr("Pokémon Parties"), resolveDataPath(1));
-    m_files->addItem(tr("Trainer IDs (Advanced Source)"), "include/constants/trainers.h");
+    if (QFileInfo::exists(m_root + "/src/data/trainers.party")) {
+        m_files->addItem(tr("Expansion Trainers & Parties"), "src/data/trainers.party");
+        if (QFileInfo::exists(m_root + "/src/data/trainers_frlg.party"))
+            m_files->addItem(tr("Expansion FRLG Trainers & Parties"), "src/data/trainers_frlg.party");
+    } else {
+        m_files->addItem(tr("Trainers"), resolveDataPath(0));
+        m_files->addItem(tr("Pokémon Parties"), resolveDataPath(1));
+        m_files->addItem(tr("Trainer IDs (Advanced Source)"), "include/constants/trainers.h");
+    }
     m_files->setEnabled(available);
     m_locate->setEnabled(available);
     m_source->setEnabled(available);
@@ -367,7 +396,7 @@ void BattleEditor::loadFile(int index) {
     bool loaded = false;
     if (index >= 0) {
         if (!QFileInfo::exists(m_path)) error = tr("File not found. Use Locate File to select your fork's C data file.");
-        else if (!editable(m_path)) error = tr("This path is a symlink or resolves outside the project.");
+        else if (!editable(m_path)) error = tr("This path is outside the editable project source, a symlink, or a generated header backed by .party source.");
         else loaded = m_file.load(m_path, &error);
     }
     m_document.parse(loaded ? baseline() : QString());
@@ -380,7 +409,7 @@ void BattleEditor::loadFile(int index) {
         m_status->setText(tr("No supported %1 declarations in %2. Use Locate File for the correct C file. Custom or generated formats require an adapter.")
             .arg(index == 0 ? tr("trainer") : tr("party"), m_files->itemData(index).toString()));
     }
-    if (loaded && index == 2) m_views->setCurrentIndex(1);
+    if (loaded && index == 2 && !m_document.isPartySource()) m_views->setCurrentIndex(1);
 }
 void BattleEditor::render(int row) {
     QSignalBlocker blocker(m_records); m_records->clear();
@@ -411,20 +440,24 @@ void BattleEditor::addFields(int index, QTreeWidgetItem *parent) {
     item->setText(0, fieldLabel(node.name)); item->setData(0, Qt::UserRole, index);
     item->setData(0, FieldRole, node.name);
     item->setToolTip(0, node.name);
+    if (m_document.isPartySource() && node.name == ".species") {
+        item->setText(0, tr("Pokémon / held item"));
+        item->setToolTip(0, tr("Showdown format: Nickname (Species) (M/F) @ Held Item. Species alone also works."));
+    }
     if (node.parent >= 0 && (m_document.nodes().at(node.parent).name == ".moves" || m_document.nodes().at(node.parent).name == ".items")) {
         const auto parentNode = m_document.nodes().at(node.parent);
         item->setText(0, parentNode.name == ".moves" ? tr("Move %1").arg(parentNode.children.indexOf(index)+1)
             : tr("Item %1").arg(parentNode.children.indexOf(index)+1));
     }
-    if (node.group && node.parent >= 0 && m_document.records().contains(node.parent) && m_document.nodes().at(node.parent).parent < 0) {
-        QString species, level;
+    if (m_document.isPokemon(index)) {
+        QString species, level = m_document.isPartySource() ? tr("100 (default)") : QString();
         for (int child : node.children) {
             const auto field = m_document.nodes().at(child);
             const auto value = m_document.source().mid(field.valueStart, field.end-field.valueStart);
             if (field.name == ".species") species = value;
             if (field.name == ".lvl") level = value;
         }
-        item->setText(0, tr("Pokémon %1").arg(m_document.nodes().at(node.parent).children.indexOf(index)+1));
+        item->setText(0, tr("Pokémon %1").arg(m_document.pokemon(node.parent).indexOf(index)+1));
         item->setText(1, tr("%1 • Level %2").arg(species, level));
     }
     if (!node.group) {
@@ -441,13 +474,12 @@ void BattleEditor::mutate(bool remove) {
     if (index < 0) return;
     const auto node = m_document.nodes().at(index);
     const bool record = m_document.records().contains(index);
-    const bool pokemon = node.group && node.parent >= 0 && m_document.records().contains(node.parent)
-        && m_document.nodes().at(node.parent).parent < 0;
+    const bool pokemon = m_document.isPokemon(index);
     if (!record && !pokemon) { m_status->setText(tr("Select a trainer, party, or Pokémon group first.")); return; }
     QString name;
     if (!remove && record) {
         bool ok;
-        name = QInputDialog::getText(this, tr("Duplicate Battle Record"), node.parent < 0 ? tr("New party C symbol:") : tr("New TRAINER_ constant (define it in include/constants/trainers.h too):"), QLineEdit::Normal, {}, &ok);
+        name = QInputDialog::getText(this, tr("Duplicate Battle Record"), m_document.isPartySource() ? tr("New TRAINER_ ID (generated from the section header):") : node.parent < 0 ? tr("New party C symbol:") : tr("New TRAINER_ constant (define it in include/constants/trainers.h too):"), QLineEdit::Normal, {}, &ok);
         if (!ok) return;
     }
     if (remove && QMessageBox::question(this, tr("Delete Battle Record"), tr("Delete %1? Update references in scripts and trainer data before building.").arg(node.name)) != QMessageBox::Yes) return;
@@ -512,7 +544,7 @@ int BattleEditor::selectedTarget() const {
     int node = m_fields->currentItem() ? m_fields->currentItem()->data(0, Qt::UserRole).toInt() : record;
     // Fields inside a Pokémon act on that Pokémon. Trainer fields act on the
     // trainer, never on its items or party-reference initializer.
-    if (m_document.nodes().at(record).parent < 0) {
+    if (m_document.isPartySource() || m_document.nodes().at(record).parent < 0) {
         while (node != record && m_document.nodes().at(node).parent != record) node = m_document.nodes().at(node).parent;
         return node == record || m_document.nodes().at(node).group ? node : record;
     }
@@ -538,17 +570,19 @@ QString BattleEditor::partyReference() const {
 void BattleEditor::updateActions() {
     const int target = selectedTarget();
     const bool valid = m_loaded && target >= 0;
-    const bool party = valid && m_document.nodes().at(m_document.records().at(m_records->currentRow())).parent < 0;
-    const bool pokemon = party && !m_document.records().contains(target);
+    const int record = valid ? m_document.records().at(m_records->currentRow()) : -1;
+    const bool party = valid && !m_document.isTrainer(record);
+    const bool pokemon = valid && m_document.isPokemon(target);
+    const bool partyContainer = valid && (party || m_document.isPartySource());
     const QString kind = pokemon ? tr("Pokémon") : party ? tr("Party") : tr("Trainer");
     m_duplicate->setText(tr("Duplicate %1").arg(kind)); m_remove->setText(tr("Delete %1").arg(kind));
     const bool mutableTarget = valid && m_document.canResize(target);
-    const QString resizeHelp = valid && !mutableTarget ? tr("Use Advanced Source to change conditional layouts or explicitly sized arrays.") : QString();
+    const QString resizeHelp = valid && !mutableTarget ? tr("Use Advanced Source to change conditional layouts, macro-based teams, or explicitly sized arrays.") : QString();
     m_duplicate->setToolTip(resizeHelp); m_remove->setToolTip(resizeHelp); m_addPokemon->setToolTip(resizeHelp);
-    m_duplicate->setEnabled(mutableTarget && (!pokemon || m_document.nodes().at(m_document.nodes().at(target).parent).children.size() < 6));
-    m_remove->setEnabled(mutableTarget && (!pokemon || m_document.nodes().at(m_document.nodes().at(target).parent).children.size() > 1));
-    m_addPokemon->setEnabled(party && mutableTarget && m_document.nodes().at(m_document.records().at(m_records->currentRow())).children.size() < 6);
-    m_goParty->setEnabled(valid && !party && !partyReference().isEmpty());
+    m_duplicate->setEnabled(mutableTarget && (!pokemon || m_document.pokemon(m_document.nodes().at(target).parent).size() < 6));
+    m_remove->setEnabled(mutableTarget && (!pokemon || m_document.pokemon(m_document.nodes().at(target).parent).size() > 1));
+    m_addPokemon->setEnabled(partyContainer && mutableTarget && m_document.pokemon(record).size() < 6);
+    m_goParty->setEnabled(valid && !party && (m_document.isPartySource() ? !m_document.pokemon(record).isEmpty() : !partyReference().isEmpty()));
 }
 
 void BattleEditor::updateSummaries() {
@@ -559,7 +593,7 @@ void BattleEditor::updateSummaries() {
         const auto node = m_document.nodes().at(index);
         if (!node.group) item->setToolTip(1, tr("Source: %1").arg(item->text(1)));
         else if (node.parent >= 0 && m_document.records().contains(node.parent) && m_document.nodes().at(node.parent).parent < 0) {
-            QString species, level;
+            QString species, level = m_document.isPartySource() ? tr("100 (default)") : QString();
             for (int child : node.children) {
                 const auto field = m_document.nodes().at(child);
                 const auto value = m_document.source().mid(field.valueStart, field.end-field.valueStart);
@@ -588,7 +622,7 @@ bool BattleEditor::containsData(const QString &path, int kind) const {
     BattleDocument data;
     data.parse(source.sourceText());
     for (int record : data.records()) {
-        if ((data.nodes().at(record).parent < 0) == (kind == 1)) return true;
+        if (data.isPartySource() || ((data.nodes().at(record).parent < 0) == (kind == 1))) return true;
     }
     return false;
 }

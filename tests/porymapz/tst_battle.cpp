@@ -21,6 +21,7 @@
 #include <QLabel>
 #include <QTabWidget>
 #include <QSet>
+#include <QProcess>
 #include "porymapz/dialogueeditor.h"
 using namespace PorymapZ;
 static const QString trainers = "// untouched\nconst struct Trainer gTrainers[] = {\n"
@@ -28,6 +29,11 @@ static const QString trainers = "// untouched\nconst struct Trainer gTrainers[] 
 static const QString parties = "static const struct TrainerMonItemCustomMoves sParty_Test[] = {\n"
     " { .iv = 100, .lvl = 5, .species = SPECIES_TREECKO, .heldItem = ITEM_NONE,\n"
     " .moves = {MOVE_POUND, MOVE_LEER, MOVE_NONE, MOVE_NONE}, },\n};\n";
+static const QString expansion =
+    "/* retained comment: === TRAINER_FAKE === */\n"
+    "=== TRAINER_TEST ===\nName: ALICE\nClass: Hiker\nPic: Hiker\nDouble Battle: No\nAI: Check Bad Move\n\n"
+    "Geodude @ Oran Berry\nLevel: 21\nAbility: Rock Head\nIVs: 31 HP / 0 Atk\nEVs: 252 HP / 252 Def\nNature: Bold\n- Tackle\n- Defense Curl\n\n"
+    "=== TRAINER_NONE ===\nName:\nPic: Hiker\n";
 class BattleTest : public QObject {
     Q_OBJECT
     int field(const BattleDocument &doc, const QString &name) {
@@ -55,6 +61,18 @@ class BattleTest : public QObject {
     }
     void answer(QMessageBox::StandardButton choice) {
         QTimer::singleShot(0, [choice] { auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); if (box) box->button(choice)->click(); });
+    }
+    bool compileParty(const QString &tool, const QString &input, const QString &output, QString *error) {
+        QProcess preprocess;
+        preprocess.start("cpp", {"-traditional-cpp", "-P", input, "-o", input + ".preprocessed"});
+        if (!preprocess.waitForFinished(10000) || preprocess.exitStatus() != QProcess::NormalExit || preprocess.exitCode() != 0) {
+            *error = preprocess.errorString() + QString::fromUtf8(preprocess.readAllStandardError()); return false;
+        }
+        QProcess proc; proc.start(tool, {"-o", output, input + ".preprocessed"});
+        if (!proc.waitForFinished(10000) || proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0) {
+            *error = proc.errorString() + QString::fromUtf8(proc.readAllStandardError()); return false;
+        }
+        return true;
     }
 private slots:
     void trainerFieldsPreserveSource() {
@@ -118,6 +136,8 @@ private slots:
         QVERIFY(!doc.duplicate(doc.nodes()[party].children.first()));
         QCOMPARE(doc.source(), full);
         QVERIFY(doc.parse(QString(parties).replace("[]", "[1]")));
+        QVERIFY(!doc.appendPokemon(doc.records().first()));
+        QVERIFY(doc.parse("static const struct TrainerMonNoItemDefaultMoves team[] = { DUMMY_TRAINER_MON };"));
         QVERIFY(!doc.appendPokemon(doc.records().first()));
         QVERIFY(doc.parse(trainers));
         const auto before = doc.source();
@@ -210,6 +230,95 @@ private slots:
         QVERIFY(speciesEditor && speciesEditor->completer());
         auto *model = speciesEditor->completer()->model();
         QCOMPARE(model->rowCount(), 1); QCOMPARE(model->index(0,0).data().toString(), QString("SPECIES_TREECKO"));
+    }
+    void expansionSourceEditing() {
+        BattleDocument doc; QVERIFY(doc.parse(expansion)); QVERIFY(doc.isPartySource());
+        QCOMPARE(doc.records().size(), 2);
+        const int trainer = doc.records().first(); QVERIFY(doc.isTrainer(trainer));
+        QCOMPARE(doc.pokemon(trainer).size(), 1);
+        const int mon = doc.pokemon(trainer).first(); QVERIFY(doc.isPokemon(mon));
+        QVERIFY(doc.setValue(field(doc, ".lvl"), "50"));
+        QCOMPARE(doc.source(), QString(expansion).replace("Level: 21", "Level: 50"));
+        const auto before = doc.source();
+        const int moves = field(doc, ".moves");
+        QVERIFY(!doc.setValue(doc.nodes().at(moves).children.last(), ""));
+        QVERIFY(!doc.setValue(field(doc, ".lvl"), "50\n=== TRAINER_INJECT ==="));
+        QCOMPARE(doc.source(), before);
+        QVERIFY(doc.setValue(field(doc, ".trainerName"), "BOB"));
+        QVERIFY(doc.source().contains("Name: BOB"));
+        QVERIFY(doc.duplicate(mon)); QCOMPARE(doc.pokemon(trainer).size(), 2);
+        QVERIFY(doc.remove(doc.pokemon(trainer).first())); QCOMPARE(doc.pokemon(trainer).size(), 1);
+        QVERIFY(!doc.remove(doc.pokemon(trainer).first()));
+        QVERIFY(doc.appendPokemon(trainer)); QCOMPARE(doc.pokemon(trainer).size(), 2);
+        QVERIFY(doc.source().contains("Treecko\nLevel: 5"));
+        QVERIFY(doc.duplicate(trainer, "TRAINER_COPY")); QCOMPARE(doc.records().size(), 3);
+        QVERIFY(!doc.duplicate(trainer, "TRAINER_COPY"));
+        QVERIFY(doc.source().startsWith("/* retained comment"));
+        QVERIFY(doc.parse(QString(expansion).replace("\n", "\r\n")));
+        QVERIFY(doc.appendPokemon(doc.records().first()));
+        QVERIFY(!QString(doc.source()).replace("\r\n", "").contains('\n'));
+    }
+    void expansionWorkspace() {
+        QTemporaryDir dir; QVERIFY(createProject(dir));
+        QFile party(dir.filePath("src/data/trainers.party")); QVERIFY(party.open(QIODevice::WriteOnly));
+        party.write(expansion.toUtf8()); party.close();
+        // The fixture includes stock headers: .party must win over generated C.
+        BattleEditor editor; QVERIFY(editor.setScene(dir.path(), "Test", {}));
+        auto *files = editor.findChild<QComboBox *>("battleFiles");
+        QCOMPARE(files->count(), 1);
+        QCOMPARE(files->currentData().toString(), QString("src/data/trainers.party"));
+        auto *tree = editor.findChild<QTreeWidget *>("battleFields");
+        auto *add = editor.findChild<QPushButton *>("addBattlePokemon");
+        auto *go = editor.findChild<QPushButton *>("goToBattleParty");
+        auto *remove = editor.findChild<QPushButton *>("deleteBattleRecord");
+        auto *source = editor.findChild<QPlainTextEdit *>("battleSource");
+        QVERIFY(add->isEnabled()); QVERIFY(go->isEnabled());
+        QCOMPARE(remove->text(), QString("Delete Trainer"));
+        go->click(); QCOMPARE(remove->text(), QString("Delete Pokémon"));
+        QCOMPARE(tree->currentItem()->text(0), QString("Pokémon 1"));
+        QVERIFY(!remove->isEnabled()); add->click();
+        QVERIFY(source->toPlainText().contains("Treecko"));
+        QCOMPARE(tree->currentItem()->text(0), QString("Pokémon 2"));
+        source->undo(); QVERIFY(!editor.hasUnsavedChanges());
+        findField(tree, ".lvl")->setText(1, "42");
+        QVERIFY(editor.saveChanges());
+        QVERIFY(party.open(QIODevice::ReadOnly));
+        QVERIFY(party.readAll().contains("Level: 42")); party.close();
+        QFile generated(dir.filePath("src/data/trainers.h")); QVERIFY(generated.open(QIODevice::ReadOnly));
+        QCOMPARE(generated.readAll(), trainers.toUtf8());
+    }
+    void expansionCorpus() {
+        const QString path = qEnvironmentVariable("PORYMAP_Z_EXPANSION_CORPUS");
+        if (path.isEmpty()) QSKIP("Set PORYMAP_Z_EXPANSION_CORPUS to a copy of src/data/trainers.party.");
+        QFile source(path); QVERIFY(source.open(QIODevice::ReadOnly));
+        const auto bytes = source.readAll();
+        BattleDocument doc; QVERIFY(doc.parse(QString::fromUtf8(bytes))); QVERIFY(doc.isPartySource());
+        const QRegularExpression headers("^=== TRAINER_[A-Za-z0-9_]+ ===", QRegularExpression::MultilineOption);
+        int count = 0; auto matches = headers.globalMatch(doc.source()); while (matches.hasNext()) { matches.next(); ++count; }
+        QVERIFY(count > 500); QCOMPARE(doc.records().size(), count);
+        const auto original = doc.source();
+        QVERIFY(doc.setValue(field(doc, ".lvl"), "42"));
+        QVERIFY(doc.source().contains("Level: 42"));
+        QTemporaryDir dir;
+        const auto generatedInput = dir.filePath("trainers.party");
+        QFile output(generatedInput); QVERIFY(output.open(QIODevice::WriteOnly));
+        output.write(doc.source().toUtf8()); output.close();
+        const QString trainerproc = qEnvironmentVariable("PORYMAP_Z_TRAINERPROC");
+        if (!trainerproc.isEmpty()) {
+            const auto compiled = dir.filePath("trainers.h");
+            QString error; QVERIFY2(compileParty(trainerproc, generatedInput, compiled, &error), qPrintable(error));
+            QFile generated(compiled); QVERIFY(generated.open(QIODevice::ReadOnly));
+            QVERIFY(generated.readAll().contains(".lvl = 42"));
+        }
+        QVERIFY(doc.parse(original));
+        const int trainer = doc.records().at(1);
+        QVERIFY(doc.appendPokemon(trainer));
+        QVERIFY(doc.duplicate(trainer, "TRAINER_EDITOR_TEST_COPY"));
+        if (!trainerproc.isEmpty()) {
+            QVERIFY(output.open(QIODevice::WriteOnly)); output.write(doc.source().toUtf8()); output.close();
+            QString error;
+            QVERIFY2(compileParty(trainerproc, generatedInput, dir.filePath("mutated.h"), &error), qPrintable(error));
+        }
     }
     void relocatedDataAndMissingFileMessages() {
         QTemporaryDir dir; QVERIFY(createProject(dir));
