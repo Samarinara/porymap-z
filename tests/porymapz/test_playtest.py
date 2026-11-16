@@ -299,6 +299,121 @@ finally:
         self.assertIn('SetMainCallback2(CB2_NewGame)', (self.root / 'src/intro.c').read_text())
         self.assertNotIn('ExecuteTruckSequence', (self.root / 'src/overworld.c').read_text())
 
+    def story_fixture(self):
+        path = self.root / 'src/overworld.c'
+        path.write_text('#include "global.h"\n' + path.read_text() + '''
+void LoadStartingMap(void) {
+    ClearTempFieldEventData();
+    RunOnTransitionMapScript();
+}
+''')
+        self.config.update(flags={'FLAG_RECEIVED_STARTER': False, 'FLAG_TEMP_TEST': True},
+                           variables={'VAR_STORY': 2, 'VAR_TEMP_TEST': 65535})
+
+    def test_empty_party_supports_classic_and_modern_party_storage(self):
+        path = self.root / 'src/new_game.c'
+        original = path.read_text()
+        for modern in (False, True):
+            with self.subTest(modern=modern):
+                path.write_text(original.replace('ClearSav1();',
+                    'ClearSav1(); gPartiesCount[B_TRAINER_PLAYER] = 0;') if modern else original)
+                # Preserve the original startup sources for the next iteration.
+                intro = (self.root / 'src/intro.c').read_text()
+                overworld = (self.root / 'src/overworld.c').read_text()
+                playtest.patch_project(self.root, dict(self.config, empty_party=True, species='', level=0))
+                source = path.read_text()
+                self.assertIn('ZeroPlayerPartyMons();', source)
+                self.assertIn(('gPartiesCount[B_TRAINER_PLAYER]' if modern else 'gPlayerPartyCount') + ' = 0;', source)
+                self.assertNotIn('CreateMon(', source)
+                self.assertNotIn('CreateRandomMon(', source)
+                (self.root / 'src/intro.c').write_text(intro)
+                (self.root / 'src/overworld.c').write_text(overworld)
+
+    def test_story_overrides_follow_defaults_and_precede_initial_map_scripts(self):
+        self.story_fixture()
+        playtest.patch_project(self.root, self.config)
+        source = (self.root / 'src/new_game.c').read_text()
+        self.assertIn('FlagClear(FLAG_RECEIVED_STARTER);', source)
+        self.assertIn('FlagSet(FLAG_TEMP_TEST);', source)
+        self.assertIn('VarSet(VAR_STORY, 2);', source)
+        self.assertIn('VarSet(VAR_TEMP_TEST, 65535);', source)
+        self.assertLess(source.index('ResetFlags();'), source.index('PorymapDemo_ApplyStoryState();'))
+        self.assertLess(source.index('PorymapDemo_ApplyStoryState();'), source.index('WarpIntoMap();'))
+        source = (self.root / 'src/overworld.c').read_text()
+        self.assertLess(source.index('ClearTempFieldEventData();'), source.index('PorymapDemo_ApplyInitialStoryState();'))
+        self.assertLess(source.index('PorymapDemo_ApplyInitialStoryState();'), source.index('RunOnTransitionMapScript();'))
+
+    @unittest.skipUnless(shutil.which('cc'), 'Requires a C compiler')
+    def test_story_overrides_restore_initial_temp_state_without_resetting_later_progress(self):
+        self.story_fixture()
+        playtest.patch_project(self.root, self.config)
+        source = (self.root / 'src/new_game.c').read_text()
+        helpers = source[source.index('/* Demo overrides follow new-game defaults'):]
+        harness = self.root / 'story.c'
+        harness.write_text('''
+#include <assert.h>
+typedef unsigned char bool8;
+#define FALSE 0
+#define TRUE 1
+#define FLAG_RECEIVED_STARTER 1
+#define FLAG_TEMP_TEST 2
+#define VAR_STORY 1
+#define VAR_TEMP_TEST 2
+static unsigned flags[3], vars[3];
+void FlagSet(unsigned id) { flags[id] = 1; }
+void FlagClear(unsigned id) { flags[id] = 0; }
+void VarSet(unsigned id, unsigned value) { vars[id] = value; }
+''' + helpers + '''
+int main(void) {
+    flags[FLAG_RECEIVED_STARTER] = 1; /* new-game defaults */
+    PorymapDemo_ApplyStoryState();
+    assert(!flags[FLAG_RECEIVED_STARTER] && vars[VAR_STORY] == 2);
+    flags[FLAG_TEMP_TEST] = vars[VAR_TEMP_TEST] = 0; /* initial map reset */
+    PorymapDemo_ApplyInitialStoryState();
+    assert(flags[FLAG_TEMP_TEST] && vars[VAR_TEMP_TEST] == 65535);
+    flags[FLAG_RECEIVED_STARTER] = 1; /* receiving a starter progresses the story */
+    vars[VAR_STORY] = 3;
+    flags[FLAG_TEMP_TEST] = vars[VAR_TEMP_TEST] = 0; /* visit another map */
+    PorymapDemo_ApplyInitialStoryState();
+    assert(flags[FLAG_RECEIVED_STARTER] && vars[VAR_STORY] == 3);
+    assert(!flags[FLAG_TEMP_TEST] && vars[VAR_TEMP_TEST] == 0);
+    return 0;
+}
+''')
+        binary = self.root / 'story-test'
+        subprocess.run(['cc', '-std=c99', '-Wall', '-Werror', str(harness), '-o', str(binary)],
+                       check=True, capture_output=True, timeout=20)
+        subprocess.run([str(binary)], check=True, capture_output=True, timeout=10)
+
+    def test_invalid_story_overrides_fail_before_modifying_sources(self):
+        original = (self.root / 'src/new_game.c').read_bytes()
+        for override in (
+                {'flags': []}, {'flags': {'FLAG_TEST': 1}}, {'flags': {'FLAG_X);Bad(': True}},
+                {'variables': []}, {'variables': {'VAR_TEST': True}},
+                {'variables': {'VAR_TEST': -1}}, {'variables': {'VAR_TEST': 65536}},
+                {'variables': {'VAR_TEST': '2'}}, {'variables': {'VAR_X);Bad(': 0}},
+                {'empty_party': 'true'}):
+            with self.subTest(override=override), self.assertRaises(ValueError):
+                playtest.patch_project(self.root, dict(self.config, **override))
+            self.assertEqual((self.root / 'src/new_game.c').read_bytes(), original)
+
+    def test_missing_temp_reset_rejects_story_overrides_without_partial_patch(self):
+        original = (self.root / 'src/new_game.c').read_bytes()
+        with self.assertRaisesRegex(ValueError, 'ClearTempFieldEventData'):
+            playtest.patch_project(self.root, dict(self.config, flags={'FLAG_TEST': True}))
+        self.assertEqual((self.root / 'src/new_game.c').read_bytes(), original)
+
+    def test_cached_story_overrides_can_be_removed_and_party_restored(self):
+        self.story_fixture()
+        target = Path(self.temp.name) / 'snapshot'
+        playtest.copy_project(self.root, target)
+        playtest.patch_project(target, dict(self.config, empty_party=True), original=self.root)
+        config = dict(self.config, flags={}, variables={}, empty_party=False)
+        playtest.patch_project(target, config, original=self.root)
+        self.assertNotIn('PorymapDemo_ApplyStoryState', (target / 'src/new_game.c').read_text())
+        self.assertNotIn('PorymapDemo_ApplyInitialStoryState', (target / 'src/overworld.c').read_text())
+        self.assertIn('gPlayerPartyCount = 1;', (target / 'src/new_game.c').read_text())
+
     @unittest.skipUnless(shutil.which('cc'), 'Requires a C compiler')
     def test_patched_sources_compile_with_headers_that_require_global_types(self):
         include = self.root / 'include'

@@ -23,9 +23,14 @@ def verify_boot(artifacts, checker, nm='arm-none-eabi-nm', frames=900):
     missing = [name for name in names if name not in symbols]
     if missing:
         raise RuntimeError('Missing ELF symbols for boot verification: ' + ', '.join(missing))
-    result = subprocess.run(
-        [str(checker), str(rom), *(hex(symbols[name]) for name in names),
-         str(config['x']), str(config['y']), str(frames)],
+    command = [str(checker), str(rom), *(hex(symbols[name]) for name in names),
+               str(config['x']), str(config['y']), str(frames)]
+    if 'empty_party' in config:
+        party_count = symbols.get('gPartiesCount', symbols.get('gPlayerPartyCount'))
+        if party_count is None:
+            raise RuntimeError('Missing player party count symbol for boot verification.')
+        command.extend((hex(party_count), '0' if config['empty_party'] else '1'))
+    result = subprocess.run(command,
         capture_output=True, text=True, timeout=60)
     (artifacts / 'boot.json').write_text(result.stdout)
     (artifacts / 'boot-stderr.log').write_text(result.stderr)

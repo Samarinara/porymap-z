@@ -75,6 +75,23 @@ VBA executables are detected on `PATH`; **Browse** accepts another emulator that
 opens a ROM passed as its first argument. Click **OK**, then click a tile on the
 current map. Escape or right-click cancels tile selection without editing the map.
 
+To test receiving a starter, enable **Start with an empty party** on the
+**Character** tab. The partner and level controls are disabled. On **Story state**,
+use **Add flag** to choose a project flag and **Set** or **Clear** it, and **Add
+variable** to choose a story variable and give it a value from 0 to 65535. Names
+are searchable, and you can type a project's `FLAG_...` or `VAR_...` constant.
+Remove rows to leave those values at the game's normal new-game defaults.
+Duplicate names and malformed constants are rejected; undefined constants are
+reported by the game compiler. These settings are remembered per project.
+
+Overrides apply after new-game defaults, before loading the starting map, and
+are restored once after the initial map's temporary-state reset. The starting
+map's scripts then run normally and can change the values. Later map visits do
+not reapply the overrides, so acquiring a starter can progress the story normally.
+Choose flags and variable values based on the conditions in your project's
+starter scripts; the required state differs between games and forks. All changes
+remain in the isolated demo, and each launch starts from a fresh save.
+
 Porymap saves current project edits and builds an isolated demo that skips the intro
 and starts a fresh character at the selected tile. **Demo area** defaults to the
 current map. Choose immediate connections and warp destinations for a small area,

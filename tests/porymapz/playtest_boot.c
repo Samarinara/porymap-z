@@ -19,8 +19,8 @@ static void log_message(struct mLogger *logger, int category, enum mLogLevel lev
 }
 
 int main(int argc, char **argv) {
-    if (argc != 10) {
-        fprintf(stderr, "Usage: %s ROM gMain gSaveBlock1Ptr CB1_Overworld CB2_Overworld map x y frames\n", argv[0]);
+    if (argc != 10 && argc != 12) {
+        fprintf(stderr, "Usage: %s ROM gMain gSaveBlock1Ptr CB1_Overworld CB2_Overworld map x y frames [partyCountAddress expectedCount]\n", argv[0]);
         return 2;
     }
     const uint32_t main_addr = strtoul(argv[2], NULL, 0);
@@ -31,6 +31,8 @@ int main(int argc, char **argv) {
     const int expected_x = strtol(argv[7], NULL, 0);
     const int expected_y = strtol(argv[8], NULL, 0);
     const unsigned frames = strtoul(argv[9], NULL, 0);
+    const uint32_t party_count_addr = argc == 12 ? strtoul(argv[10], NULL, 0) : 0;
+    const int expected_party_count = argc == 12 ? strtol(argv[11], NULL, 0) : -1;
     struct mLogger logger = {.log = log_message, .filter = NULL};
     mLogSetDefaultLogger(&logger);
     struct mCore *core = mCoreFind(argv[1]);
@@ -72,14 +74,16 @@ int main(int argc, char **argv) {
         }
     }
     const int valid_save = save >= 0x02000000 && save < 0x02040000;
+    const int party_count = party_count_addr ? core->busRead8(core, party_count_addr) : -1;
     const int passed = valid_save && overworld_frames >= 60 &&
                        ((group << 8) | number) == expected_map &&
-                       x == expected_x && y == expected_y && nonblack > 1000 && colors >= 8;
+                       x == expected_x && y == expected_y && nonblack > 1000 && colors >= 8 &&
+                       (expected_party_count < 0 || party_count == expected_party_count);
     printf("{\"passed\":%s,\"frames\":%u,\"overworld_frames\":%u,"
            "\"map_group\":%u,\"map_number\":%u,\"x\":%d,\"y\":%d,"
-           "\"nonblack_pixels\":%u,\"colors\":%u}\n",
+           "\"nonblack_pixels\":%u,\"colors\":%u,\"party_count\":%d}\n",
            passed ? "true" : "false", frames, overworld_frames,
-           group, number, x, y, nonblack, colors);
+           group, number, x, y, nonblack, colors, party_count);
     if (!passed) fprintf(stderr, "Demo did not reach the requested visible overworld.\n");
     mCoreConfigDeinit(&core->config);
     core->deinit(core);

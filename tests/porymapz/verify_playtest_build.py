@@ -36,9 +36,24 @@ def main():
     parser.add_argument('--name', default='DEMO')
     parser.add_argument('--gender', type=int, choices=(0, 1), default=0)
     parser.add_argument('--level', type=int, default=5)
+    parser.add_argument('--empty-party', action='store_true')
+    parser.add_argument('--set-flag', action='append', default=[])
+    parser.add_argument('--clear-flag', action='append', default=[])
+    parser.add_argument('--var', action='append', default=[], metavar='VAR_NAME=VALUE')
     parser.add_argument('--x', type=int, default=3)
     parser.add_argument('--y', type=int, default=7)
     args = parser.parse_args()
+    variables = {}
+    for assignment in args.var:
+        key, separator, value = assignment.partition('=')
+        try:
+            if not separator or key in variables:
+                raise ValueError()
+            variables[key] = int(value, 0)
+        except ValueError:
+            parser.error('--var requires a unique VAR_NAME=VALUE with a decimal or hexadecimal integer')
+    if set(args.set_flag) & set(args.clear_flag):
+        parser.error('A flag cannot be both set and cleared')
     project = args.project.resolve()
     artifacts = args.artifact_dir.resolve()
     artifacts.mkdir(parents=True, exist_ok=True)
@@ -77,7 +92,9 @@ print('Verified GBA ROM header and exported build artifacts.', flush=True)
                       build_target=args.build_target,
                       scope=args.scope,
                       map=args.map, species=args.species, name=args.name, gender=args.gender,
-                      level=args.level, x=args.x, y=args.y)
+                      level=args.level, x=args.x, y=args.y, empty_party=args.empty_party,
+                      flags={**dict.fromkeys(args.set_flag, True), **dict.fromkeys(args.clear_flag, False)},
+                      variables=variables)
         if args.cache_dir:
             config['cache_dir'] = str(args.cache_dir.resolve())
         config_path = temp / 'config.json'

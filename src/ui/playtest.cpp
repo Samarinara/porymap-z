@@ -6,6 +6,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QComboBox>
+#include <QCompleter>
 #include <QCheckBox>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -13,6 +14,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QHeaderView>
 #include <QHBoxLayout>
 #include <QJsonDocument>
 #include <QJsonArray>
@@ -31,6 +33,8 @@
 #include <QStatusBar>
 #include <QStyle>
 #include <QTemporaryDir>
+#include <QTableWidget>
+#include <QTabWidget>
 #include <QToolBar>
 #include <QVBoxLayout>
 #include <cmath>
@@ -79,8 +83,18 @@ void Playtest::configure() {
     const QString prefix = "playtest/" + m_editor->project->root + "/";
     QDialog dialog(m_window);
     dialog.setObjectName("playtestConfiguration");
-    dialog.setWindowTitle(tr("Demo character"));
-    auto *form = new QFormLayout(&dialog);
+    dialog.setWindowTitle(tr("Map demo settings"));
+    dialog.resize(660, 540);
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *tabs = new QTabWidget;
+    auto *character = new QWidget;
+    auto *story = new QWidget;
+    auto *build = new QWidget;
+    tabs->addTab(character, tr("Character"));
+    tabs->addTab(story, tr("Story state"));
+    tabs->addTab(build, tr("Build"));
+    layout->addWidget(tabs);
+    auto *form = new QFormLayout(character);
     auto *help = new QLabel(tr("Choose your character, then click OK and select a tile on the map.\n"
                                "Current edits are saved before building a separate demo ROM.\n"
                                "Requires Python 3, make, and the project's GBA build toolchain."));
@@ -107,6 +121,84 @@ void Playtest::configure() {
     level->setRange(1, 100);
     level->setValue(settings.value(prefix + "level", 5).toInt());
     form->addRow(tr("Level"), level);
+    auto *emptyParty = new QCheckBox(tr("Start with an empty party (test receiving a starter)"));
+    emptyParty->setObjectName("demoEmptyParty");
+    emptyParty->setChecked(settings.value(prefix + "emptyParty", false).toBool());
+    auto updateParty = [=](bool empty) {
+        species->setEnabled(!empty);
+        level->setEnabled(!empty);
+    };
+    updateParty(emptyParty->isChecked());
+    connect(emptyParty, &QCheckBox::toggled, &dialog, updateParty);
+    form->addRow(emptyParty);
+
+    auto *storyLayout = new QVBoxLayout(story);
+    auto *storyHelp = new QLabel(tr("Override a fresh game's starting story state. Choose a project constant or type its name.\n"
+                                   "Flags can be set or cleared; variables accept values from 0 to 65535.\n"
+                                   "Overrides apply before the first map's scripts and only to this demo.\n"
+                                   "Map scripts can change them afterward; later map visits do not reapply them."));
+    storyHelp->setWordWrap(true);
+    storyLayout->addWidget(storyHelp);
+    auto makeOverrides = [&](const QString &title, const QString &objectName, const QStringList &names,
+                             const QJsonObject &saved, bool flags) {
+        storyLayout->addWidget(new QLabel(title));
+        auto *table = new QTableWidget(0, 2);
+        table->setObjectName(objectName);
+        table->setHorizontalHeaderLabels({flags ? tr("Flag") : tr("Variable"), flags ? tr("Starting state") : tr("Value")});
+        table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+        table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+        table->setSelectionBehavior(QAbstractItemView::SelectRows);
+        table->setSelectionMode(QAbstractItemView::SingleSelection);
+        table->setMinimumHeight(120);
+        storyLayout->addWidget(table);
+        auto add = [table, names, flags](const QString &constant, const QJsonValue &value) {
+            const int row = table->rowCount();
+            table->insertRow(row);
+            auto *name = new QComboBox;
+            name->setEditable(true);
+            name->setInsertPolicy(QComboBox::NoInsert);
+            name->addItems(names);
+            name->setCurrentText(constant);
+            name->completer()->setCaseSensitivity(Qt::CaseInsensitive);
+            name->completer()->setFilterMode(Qt::MatchContains);
+            table->setCellWidget(row, 0, name);
+            if (flags) {
+                auto *state = new QComboBox;
+                state->addItem(tr("Set"), true);
+                state->addItem(tr("Clear"), false);
+                state->setCurrentIndex(value.toBool(true) ? 0 : 1);
+                table->setCellWidget(row, 1, state);
+            } else {
+                auto *number = new QSpinBox;
+                number->setRange(0, 65535);
+                number->setValue(value.toInt());
+                table->setCellWidget(row, 1, number);
+            }
+            table->setCurrentCell(row, 0);
+        };
+        for (auto it = saved.begin(); it != saved.end(); ++it) add(it.key(), it.value());
+        auto *buttons = new QHBoxLayout;
+        auto *addButton = new QPushButton(flags ? tr("Add flag") : tr("Add variable"));
+        addButton->setObjectName(objectName + "Add");
+        auto *removeButton = new QPushButton(tr("Remove selected"));
+        removeButton->setObjectName(objectName + "Remove");
+        buttons->addWidget(addButton);
+        buttons->addWidget(removeButton);
+        buttons->addStretch();
+        storyLayout->addLayout(buttons);
+        connect(addButton, &QPushButton::clicked, &dialog, [add] { add(QString(), QJsonValue()); });
+        connect(removeButton, &QPushButton::clicked, table, [table] {
+            if (table->currentRow() >= 0) table->removeRow(table->currentRow());
+        });
+        return table;
+    };
+    auto savedOverrides = [&](const QString &key) {
+        return QJsonDocument::fromJson(settings.value(prefix + key).toByteArray()).object();
+    };
+    auto *flags = makeOverrides(tr("Starting flags"), "demoFlags", m_editor->project->flagNames,
+                                savedOverrides("flags"), true);
+    auto *variables = makeOverrides(tr("Starting variables"), "demoVariables", m_editor->project->varNames,
+                                    savedOverrides("variables"), false);
     QString detected;
     for (const QString &candidate : {QString("mgba-qt"), QString("mgba"), QString("visualboyadvance-m"), QString("vbam")}) {
         detected = QStandardPaths::findExecutable(candidate);
@@ -124,6 +216,7 @@ void Playtest::configure() {
         const QString path = QFileDialog::getOpenFileName(&dialog, tr("Choose GBA emulator"), emulator->text());
         if (!path.isEmpty()) emulator->setText(path);
     });
+    form = new QFormLayout(build);
     auto *makeArgs = new QLineEdit(settings.value(prefix + "makeArgs").toString());
     makeArgs->setObjectName("demoMakeArguments");
     makeArgs->setPlaceholderText(tr("Optional, e.g. modern or release"));
@@ -167,14 +260,34 @@ void Playtest::configure() {
     scopeHelp->setWordWrap(true);
     form->addRow(scopeHelp);
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-    form->addRow(buttons);
+    layout->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
         const QString executable = QStandardPaths::findExecutable(emulator->text().trimmed());
-        if (!name->hasAcceptableInput() || species->currentText().isEmpty() || executable.isEmpty()) {
-            QMessageBox::warning(&dialog, tr("Demo character"), tr("Enter a trainer name, choose a Pokémon, and select an installed emulator executable."));
+        if (!name->hasAcceptableInput() || (!emptyParty->isChecked() && species->currentText().isEmpty()) || executable.isEmpty()) {
+            QMessageBox::warning(&dialog, tr("Demo character"), tr("Enter a trainer name, choose a Pokémon or an empty party, and select an installed emulator executable."));
             return;
         }
+        QJsonObject startingFlags, startingVariables;
+        auto readOverrides = [&](QTableWidget *table, const QString &constantPrefix, QJsonObject &values) {
+            for (int row = 0; row < table->rowCount(); ++row) {
+                const QString constant = qobject_cast<QComboBox *>(table->cellWidget(row, 0))->currentText().trimmed();
+                if (!QRegularExpression("^" + constantPrefix + "[A-Z0-9_]+$").match(constant).hasMatch()
+                    || values.contains(constant)) {
+                    tabs->setCurrentWidget(story);
+                    table->setCurrentCell(row, 0);
+                    QMessageBox::warning(&dialog, tr("Starting story state"),
+                                         tr("Enter a %1 constant in each row and use each name only once.").arg(constantPrefix));
+                    return false;
+                }
+                if (constantPrefix == "FLAG_")
+                    values.insert(constant, qobject_cast<QComboBox *>(table->cellWidget(row, 1))->currentData().toBool());
+                else
+                    values.insert(constant, qobject_cast<QSpinBox *>(table->cellWidget(row, 1))->value());
+            }
+            return true;
+        };
+        if (!readOverrides(flags, "FLAG_", startingFlags) || !readOverrides(variables, "VAR_", startingVariables)) return;
         if (QStandardPaths::findExecutable("python3").isEmpty() || QStandardPaths::findExecutable("make").isEmpty()) {
             QMessageBox::warning(&dialog, tr("Missing build tools"), tr("Install Python 3 and make, and set up this project's normal GBA build toolchain first."));
             return;
@@ -182,6 +295,9 @@ void Playtest::configure() {
         m_config = {{"root", m_editor->project->root}, {"map", m_editor->map->constantName()},
                     {"name", name->text()}, {"gender", gender->currentIndex()},
                     {"species", species->currentText()}, {"level", level->value()}, {"emulator", executable}};
+        m_config.insert("empty_party", emptyParty->isChecked());
+        m_config.insert("flags", startingFlags);
+        m_config.insert("variables", startingVariables);
         QJsonArray args;
         for (const auto &arg : QProcess::splitCommand(makeArgs->text())) args.append(arg);
         m_config.insert("make_args", args);
@@ -192,6 +308,9 @@ void Playtest::configure() {
         settings.setValue(prefix + "gender", gender->currentIndex());
         settings.setValue(prefix + "species", species->currentText());
         settings.setValue(prefix + "level", level->value());
+        settings.setValue(prefix + "emptyParty", emptyParty->isChecked());
+        settings.setValue(prefix + "flags", QJsonDocument(startingFlags).toJson(QJsonDocument::Compact));
+        settings.setValue(prefix + "variables", QJsonDocument(startingVariables).toJson(QJsonDocument::Compact));
         settings.setValue(prefix + "emulator", executable);
         settings.setValue(prefix + "makeArgs", makeArgs->text());
         settings.setValue(prefix + "buildTarget", buildTarget->currentData());

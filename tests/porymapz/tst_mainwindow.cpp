@@ -13,6 +13,11 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QSettings>
+#include <QDialogButtonBox>
+#include <QPushButton>
+#include <QSpinBox>
+#include <QStandardPaths>
+#include <QTableWidget>
 #include "mainwindow.h"
 #include "porymapz/dialogueeditor.h"
 #include "porymapz/battleeditor.h"
@@ -26,6 +31,76 @@
 class MainWindowTest : public QObject {
     Q_OBJECT
 private slots:
+    void playtestStoryControlsPersist() {
+        if (QStandardPaths::findExecutable("python3").isEmpty() || QStandardPaths::findExecutable("make").isEmpty())
+            QSKIP("Requires Python 3 and make for dialog validation.");
+        QTemporaryDir root;
+        MainWindow window(nullptr);
+        window.initialize();
+        Project project;
+        project.setRoot(root.path());
+        project.speciesNames = {"SPECIES_TREECKO"};
+        project.flagNames = {"FLAG_RECEIVED_STARTER", "FLAG_HIDE_STARTER"};
+        project.varNames = {"VAR_STARTER_STORY"};
+        Map map;
+        map.setConstantName("MAP_TEST");
+        window.editor->project = &project;
+        window.editor->map = &map;
+        const QString prefix = "playtest/" + root.path() + "/";
+        const auto reset = qScopeGuard([&] {
+            window.editor->map = nullptr;
+            window.editor->project = nullptr;
+            QSettings().remove(prefix);
+        });
+        QSettings().setValue(prefix + "emulator", QStandardPaths::findExecutable("python3"));
+        auto *playtest = window.findChild<Playtest *>();
+        QVERIFY(playtest);
+        // This fixture has no rendered map; test configuration without switching
+        // the main window into the map editor after accepting the dialog.
+        QObject::disconnect(playtest, &Playtest::choosingTile, &window, nullptr);
+        for (bool saved : {false, true}) {
+            QTimer::singleShot(0, &window, [&, saved] {
+                auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dialog);
+                const auto dismiss = qScopeGuard([&] { if (dialog->result() != QDialog::Accepted) dialog->reject(); });
+                auto *empty = dialog->findChild<QCheckBox *>("demoEmptyParty");
+                auto *species = dialog->findChild<QComboBox *>("demoSpecies");
+                auto *level = dialog->findChild<QSpinBox *>("demoLevel");
+                auto *flags = dialog->findChild<QTableWidget *>("demoFlags");
+                auto *vars = dialog->findChild<QTableWidget *>("demoVariables");
+                QVERIFY(empty && species && level && flags && vars);
+                if (!saved) {
+                    QVERIFY(!empty->isChecked());
+                    empty->setChecked(true);
+                    QVERIFY(!species->isEnabled() && !level->isEnabled());
+                    // The empty party must also work when no species is selected.
+                    species->setCurrentIndex(-1);
+                    dialog->findChild<QPushButton *>("demoFlagsAdd")->click();
+                    auto *flag = qobject_cast<QComboBox *>(flags->cellWidget(0, 0));
+                    QVERIFY(flag && flag->findText("FLAG_RECEIVED_STARTER") >= 0);
+                    flag->setCurrentText("FLAG_RECEIVED_STARTER");
+                    qobject_cast<QComboBox *>(flags->cellWidget(0, 1))->setCurrentIndex(1); // Clear
+                    dialog->findChild<QPushButton *>("demoVariablesAdd")->click();
+                    qobject_cast<QComboBox *>(vars->cellWidget(0, 0))->setCurrentText("VAR_STARTER_STORY");
+                    qobject_cast<QSpinBox *>(vars->cellWidget(0, 1))->setValue(2);
+                    dialog->findChild<QPushButton *>("demoFlagsAdd")->click();
+                    dialog->findChild<QPushButton *>("demoFlagsRemove")->click();
+                    QCOMPARE(flags->rowCount(), 1);
+                    dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+                    QCOMPARE(dialog->result(), int(QDialog::Accepted));
+                } else {
+                    QVERIFY(empty->isChecked());
+                    QVERIFY(!species->isEnabled() && !level->isEnabled());
+                    QCOMPARE(flags->rowCount(), 1);
+                    QCOMPARE(vars->rowCount(), 1);
+                    QCOMPARE(qobject_cast<QComboBox *>(flags->cellWidget(0, 0))->currentText(), QString("FLAG_RECEIVED_STARTER"));
+                    QVERIFY(!qobject_cast<QComboBox *>(flags->cellWidget(0, 1))->currentData().toBool());
+                    QCOMPARE(qobject_cast<QSpinBox *>(vars->cellWidget(0, 1))->value(), 2);
+                }
+            });
+            playtest->configure();
+        }
+    }
     void playtestScopeControls() {
         QTemporaryDir root;
         MainWindow window(nullptr);

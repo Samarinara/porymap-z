@@ -250,15 +250,28 @@ def patch_project(root, config, original=None, selection=None):
     root = Path(root)
     original = Path(original) if original is not None else root
     name = config['name']
-    species = config['species']
+    empty_party = config.get('empty_party', False)
+    if type(empty_party) is not bool:
+        raise ValueError('Invalid empty party setting.')
+    species = config.get('species', '')
+    flags = config.get('flags', {})
+    variables = config.get('variables', {})
+    if (not isinstance(flags, dict) or any(
+            not re.fullmatch(r'FLAG_[A-Z0-9_]+', key) or type(value) is not bool
+            for key, value in flags.items())):
+        raise ValueError('Starting flags must map FLAG_ constants to true (set) or false (clear).')
+    if (not isinstance(variables, dict) or any(
+            not re.fullmatch(r'VAR_[A-Z0-9_]+', key) or type(value) is not int or not 0 <= value <= 65535
+            for key, value in variables.items())):
+        raise ValueError('Starting variables must map VAR_ constants to integers from 0 to 65535.')
     map_id = config['map']
     if not re.fullmatch(r'[A-Za-z0-9 ]{1,7}', name):
         raise ValueError('Use 1–7 letters, digits or spaces for the trainer name.')
-    if not re.fullmatch(r'SPECIES_[A-Z0-9_]+', species):
+    if not empty_party and not re.fullmatch(r'SPECIES_[A-Z0-9_]+', species):
         raise ValueError('Invalid Pokémon species constant.')
     if not re.fullmatch(r'MAP_[A-Z0-9_]+', map_id):
         raise ValueError('Invalid map constant.')
-    if config['gender'] not in (0, 1) or not 1 <= config['level'] <= 100:
+    if config['gender'] not in (0, 1) or (not empty_party and not 1 <= config['level'] <= 100):
         raise ValueError('Invalid character configuration.')
     if not all(isinstance(config[k], int) and 0 <= config[k] <= 32767 for k in ('x', 'y')):
         raise ValueError('Invalid starting tile.')
@@ -299,7 +312,9 @@ def patch_project(root, config, original=None, selection=None):
     modern_party = bool(re.search(r'\bgPartiesCount\s*\[\s*B_TRAINER_PLAYER\s*\]', new_game))
     party = 'gParties[B_TRAINER_PLAYER]' if modern_party else 'gPlayerParty'
     party_count = 'gPartiesCount[B_TRAINER_PLAYER]' if modern_party else 'gPlayerPartyCount'
-    if re.search(r'\bvoid\s+CreateRandomMon\s*\(', pokemon_api):
+    if empty_party:
+        create_mon = 'ZeroPlayerPartyMons();'
+    elif re.search(r'\bvoid\s+CreateRandomMon\s*\(', pokemon_api):
         create_mon = f"CreateRandomMon(&{party}[0], {species}, {config['level']});"
     else:
         create_mon = (f"CreateMon(&{party}[0], {species}, {config['level']}, "
@@ -309,8 +324,9 @@ def patch_project(root, config, original=None, selection=None):
     gSaveBlock2Ptr->playerGender = {config['gender']};
     StringCopy(gSaveBlock2Ptr->playerName, sPorymapDemoTrainerName);
     {create_mon}
-    {party_count} = 1;
+    {party_count} = {0 if empty_party else 1};
     SetMoney(&gSaveBlock1Ptr->money, 3000);
+    {'PorymapDemo_ApplyStoryState();' if flags or variables else ''}
     SetWarpDestination(MAP_GROUP({map_id}), MAP_NUM({map_id}), -1, -1, -1);
     WarpIntoMap();
     /* The warp API narrows coordinates to s8; the save fields are s16. */
@@ -331,6 +347,40 @@ def patch_project(root, config, original=None, selection=None):
     if count == 0:
         raise ValueError('Unsupported project: no field callback assignment found in CB2_NewGame.')
     sources['overworld'] = overworld[:start] + body + overworld[end:]
+    story_header = None
+    if flags or variables:
+        calls = ''.join(f"    {'FlagSet' if value else 'FlagClear'}({key});\n"
+                        for key, value in sorted(flags.items()))
+        calls += ''.join(f'    VarSet({key}, {value});\n' for key, value in sorted(variables.items()))
+        sources['new_game'] = add_game_headers(sources['new_game'],
+            ['event_data.h', 'constants/flags.h', 'constants/vars.h', 'porymap_playtest_state.h'])
+        sources['new_game'] += '''
+/* Demo overrides follow new-game defaults, before loading the starting map. */
+void PorymapDemo_ApplyStoryState(void)
+{
+''' + calls + '''}
+
+/* Initial map loading clears temporary flags/vars. Restore them once before
+ * map scripts run, then let normal gameplay change the state freely. */
+void PorymapDemo_ApplyInitialStoryState(void)
+{
+    static bool8 applied = FALSE;
+    if (!applied)
+    {
+        applied = TRUE;
+        PorymapDemo_ApplyStoryState();
+    }
+}
+'''
+        overworld, count = re.subn(r'\bClearTempFieldEventData\s*\(\s*\)\s*;',
+            'ClearTempFieldEventData();\n    PorymapDemo_ApplyInitialStoryState();', sources['overworld'])
+        if count == 0:
+            raise ValueError('Unsupported initial map setup for story overrides: '
+                             'missing ClearTempFieldEventData call.')
+        sources['overworld'] = add_game_headers(overworld, ['porymap_playtest_state.h'])
+        story_header = ('/* Generated only in the isolated Porymap demo. */\n#pragma once\n'
+                        'void PorymapDemo_ApplyStoryState(void);\n'
+                        'void PorymapDemo_ApplyInitialStoryState(void);\n')
     if selection is not None:
         # Gate every warp path, including script, escape rope and dynamic warps.
         # Reuse the current position when a script asks to leave the demo area.
@@ -355,6 +405,8 @@ def patch_project(root, config, original=None, selection=None):
             overworld[:start + 1] + guard + overworld[start + 1:], ['constants/maps.h'])
     for key, path in paths.items():
         write_changed(path, sources[key])
+    if story_header is not None:
+        write_changed(root / 'include/porymap_playtest_state.h', story_header)
 
 
 def copy_project(source, target):
