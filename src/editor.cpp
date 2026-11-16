@@ -1,4 +1,7 @@
 #include "editor.h"
+#ifdef PORYMAP_Z
+#include "porymapz/scripteditor.h"
+#endif
 #include "eventpixmapitem.h"
 #include "imageproviders.h"
 #include "log.h"
@@ -2310,10 +2313,32 @@ void Editor::deleteSelectedEvents() {
 }
 
 void Editor::openMapScripts() const {
+#ifdef PORYMAP_Z
+    if (!map || !project) return;
+    if (!projectConfig.usePoryScript) {
+        openScript(QString());
+        return;
+    }
+#endif
     openInTextEditor(map->getScriptsFilepath());
 }
 
 bool Editor::openScript(const QString &scriptLabel) const {
+#ifdef PORYMAP_Z
+    if (!map || !project) return false;
+    if (!projectConfig.usePoryScript) {
+        QStringList maps;
+        for (const auto &name : project->mapNames()) maps.append(Map::getJsonFilepath(name));
+        auto sources = project->getAllEventScriptsFilepaths();
+        sources.append(map->getScriptsFilepath());
+        PorymapZ::ScriptEditor popup(project->root, sources, maps, map->name(), scriptLabel,
+                                    ui->toolButton_Open_Scripts->window());
+        popup.exec();
+        map->invalidateScripts();
+        project->readEventScriptLabels();
+        return true;
+    }
+#endif
     // Find the location of scriptLabel.
     // First, try the current map's scripts file.
     if (openScriptInFile(scriptLabel, map->getScriptsFilepath()))

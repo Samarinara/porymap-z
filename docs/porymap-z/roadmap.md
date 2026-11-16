@@ -12,7 +12,7 @@ The Battle main tab edits pokeemerald trainer definitions and parties, including
 
 ## Milestone 3: connected game editing (planned)
 
-Add dialogue references from events, flags and variables, items, shops, and script navigation. Extend dialogue support to Poryscript source and configurable directories. Add undo/history and contextual validation without replacing the game's build pipeline.
+The [map script popup](scripts.md) now provides event-to-script navigation, map JSON groups, shared-label references, and assembly block editing. Add further dialogue references from events, flags and variables, items, and shops. Extend dialogue support to Poryscript source and configurable directories. Add undo/history and contextual validation without replacing the game's build pipeline.
 
 ## Extension boundaries
 

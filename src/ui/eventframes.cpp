@@ -297,7 +297,7 @@ void ObjectFrame::setup() {
 
     // Add button next to combo which opens combo's current script.
     this->button_script = new QToolButton(this);
-    static const QString button_script_toolTip = Util::toHtmlParagraph("Go to this script definition in text editor.");
+    static const QString button_script_toolTip = Util::toHtmlParagraph("Open this script definition.");
     this->button_script->setToolTip(button_script_toolTip);
     this->button_script->setFixedSize(this->combo_script->height(), this->combo_script->height());
     this->button_script->setIcon(QFileIconProvider().icon(QFileIconProvider::File));

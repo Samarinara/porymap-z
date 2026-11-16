@@ -20,3 +20,6 @@ contains(CONFIG, porymap_z_tests) {
     SOURCES += tests/porymapz/tst_mainwindow.cpp
     TARGET = tst_mainwindow
 }
+
+SOURCES += src/porymapz/scriptdocument.cpp src/porymapz/scripteditor.cpp
+HEADERS += include/porymapz/scriptdocument.h include/porymapz/scripteditor.h
