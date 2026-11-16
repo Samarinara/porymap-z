@@ -60,6 +60,49 @@ void CB2_NewGame(void) {
         self.assertIn('SetMainCallback2(CB2_NewGame)', (self.root / 'src/intro.c').read_text())
         self.assertNotIn('ExecuteTruckSequence', (self.root / 'src/overworld.c').read_text())
 
+    def test_expansion_conditional_callbacks_start_on_route105(self):
+        path = self.root / 'src/overworld.c'
+        path.write_text("""
+void CB2_NewGame(void) {
+    NewGameInitData();
+    if (IS_FRLG)
+        gFieldCallback = FieldCB_WarpExitFadeFromBlack;
+    else
+        gFieldCallback = ExecuteTruckSequence;
+    gFieldCallback2 = NULL;
+    DoMapLoadLoop(&gMain.state);
+}
+""")
+        self.config['map'] = 'MAP_ROUTE105'
+        playtest.patch_project(self.root, self.config)
+        patched = path.read_text()
+        self.assertEqual(patched.count('gFieldCallback = FieldCB_WarpExitFadeFromBlack;'), 2)
+        self.assertNotIn('ExecuteTruckSequence', patched)
+        self.assertIn('gFieldCallback2 = NULL;', patched)
+        self.assertIn('MAP_NUM(MAP_ROUTE105), -1, 3, 7',
+                      (self.root / 'src/new_game.c').read_text())
+
+    def test_expansion_modern_pokemon_creation_and_party_storage(self):
+        (self.root / 'include').mkdir()
+        (self.root / 'include/pokemon.h').write_text(
+            'void CreateRandomMon(struct Pokemon *mon, enum Species species, u8 level);\n')
+        path = self.root / 'src/new_game.c'
+        path.write_text(path.read_text().replace('ClearSav1();',
+                                                'ClearSav1(); gPartiesCount[B_TRAINER_PLAYER] = 0;'))
+        playtest.patch_project(self.root, self.config)
+        patched = path.read_text()
+        self.assertIn('CreateRandomMon(&gParties[B_TRAINER_PLAYER][0], SPECIES_TREECKO, 25);', patched)
+        self.assertIn('gPartiesCount[B_TRAINER_PLAYER] = 1;', patched)
+        self.assertNotIn('gPlayerParty', patched)
+        self.assertNotIn('OT_ID_PLAYER_ID', patched)
+
+    def test_missing_field_callback_does_not_partially_patch(self):
+        original = (self.root / 'src/new_game.c').read_bytes()
+        (self.root / 'src/overworld.c').write_text('void CB2_NewGame(void) { NewGameInitData(); }')
+        with self.assertRaisesRegex(ValueError, 'no field callback assignment'):
+            playtest.patch_project(self.root, self.config)
+        self.assertEqual((self.root / 'src/new_game.c').read_bytes(), original)
+
     def test_unsupported_engine_does_not_partially_patch(self):
         original = (self.root / 'src/intro.c').read_bytes()
         (self.root / 'src/overworld.c').write_text('void UnsupportedEngine(void) {}')

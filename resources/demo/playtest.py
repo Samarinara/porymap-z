@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and run a disposable pret Emerald/FireRed playtest project."""
+"""Build and run a disposable pret Emerald/FireRed/expansion playtest project."""
 import argparse
 import json
 import os
@@ -63,12 +63,23 @@ def patch_project(root, config):
 
     new_game = sources['new_game']
     _, end = function_span(new_game, 'NewGameInitData')
+    pokemon_header = root / 'include' / 'pokemon.h'
+    pokemon_api = pokemon_header.read_text() if pokemon_header.exists() else ''
+    # Expansion's newer party storage and creation API coexist with older forks.
+    modern_party = bool(re.search(r'\bgPartiesCount\s*\[\s*B_TRAINER_PLAYER\s*\]', new_game))
+    party = 'gParties[B_TRAINER_PLAYER]' if modern_party else 'gPlayerParty'
+    party_count = 'gPartiesCount[B_TRAINER_PLAYER]' if modern_party else 'gPlayerPartyCount'
+    if re.search(r'\bvoid\s+CreateRandomMon\s*\(', pokemon_api):
+        create_mon = f"CreateRandomMon(&{party}[0], {species}, {config['level']});"
+    else:
+        create_mon = (f"CreateMon(&{party}[0], {species}, {config['level']}, "
+                      "32, FALSE, 0, OT_ID_PLAYER_ID, 0);")
     setup = f'''
     /* Porymap disposable demo character. */
     gSaveBlock2Ptr->playerGender = {config['gender']};
     StringCopy(gSaveBlock2Ptr->playerName, _("{name}"));
-    CreateMon(&gPlayerParty[0], {species}, {config['level']}, 32, FALSE, 0, OT_ID_PLAYER_ID, 0);
-    gPlayerPartyCount = 1;
+    {create_mon}
+    {party_count} = 1;
     SetMoney(&gSaveBlock1Ptr->money, 3000);
     SetWarpDestination(MAP_GROUP({map_id}), MAP_NUM({map_id}), -1, {config['x']}, {config['y']});
     WarpIntoMap();
@@ -80,8 +91,10 @@ def patch_project(root, config):
     body = overworld[start:end]
     body, count = re.subn(r'gFieldCallback\s*=\s*\w+\s*;',
                          'gFieldCallback = FieldCB_WarpExitFadeFromBlack;', body)
-    if count != 1:
-        raise ValueError('Unsupported project: new game field callback differs.')
+    # Expansion selects the FRLG fade or Emerald truck callback in separate
+    # branches. Replace every branch so none can run the truck intro.
+    if count == 0:
+        raise ValueError('Unsupported project: no field callback assignment found in CB2_NewGame.')
     sources['overworld'] = overworld[:start] + body + overworld[end:]
     for key, path in paths.items():
         path.write_text(sources[key])

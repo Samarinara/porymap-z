@@ -82,8 +82,8 @@ are discarded when the emulator closes. **Stop** cancels the build or emulator;
 the output window shows build and launch errors.
 
 This requires **Python 3**, **make**, and the project's usual GBA build toolchain.
-The startup adapter supports pret **pokeemerald** and **pokefirered** startup
-functions; forks with different startup code may require an adapter. Projects with
+The startup adapter supports pret **pokeemerald**, **pokefirered**, and
+**pokeemerald-expansion** startup functions; forks with different startup code may require an adapter. Projects with
 symlinks are rejected to protect the original files. Optional build arguments
 (e.g. `modern`) and character settings are remembered per project. The initial
 copy and build can take a while and need enough temporary disk space for the
