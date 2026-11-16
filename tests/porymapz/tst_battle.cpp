@@ -4,6 +4,7 @@
 #include <QComboBox>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPlainTextEdit>
@@ -39,6 +40,22 @@ class BattleTest : public QObject {
     int field(const BattleDocument &doc, const QString &name) {
         for (int i = 0; i < doc.nodes().size(); ++i) if (doc.nodes()[i].name == name) return i;
         return -1;
+    }
+    bool openWholeProject(BattleEditor &editor, const QString &root, const QString &map, const QString &scripts = {}, bool supported = true, bool scriptsSupported = true) {
+        if (!editor.setScene(root, map, scripts, supported, scriptsSupported)) return false;
+        editor.findChild<QComboBox *>("battleScope")->setCurrentIndex(1);
+        return true;
+    }
+    QStringList visibleRecords(BattleEditor &editor) {
+        QStringList names;
+        auto *list = editor.findChild<QListWidget *>("battleRecords");
+        for (int row = 0; row < list->count(); ++row) if (!list->item(row)->isHidden()) names.append(list->item(row)->toolTip());
+        return names;
+    }
+    bool writeFile(const QString &path, const QString &text) {
+        if (!QDir().mkpath(QFileInfo(path).path())) return false;
+        QFile file(path);
+        return file.open(QIODevice::WriteOnly) && file.write(text.toUtf8()) == text.toUtf8().size();
     }
     bool createProject(QTemporaryDir &dir, const QString &trainerSource = trainers, const QString &partySource = parties) {
         if (!QDir(dir.path()).mkpath("src/data")) return false;
@@ -148,7 +165,7 @@ private slots:
     void intuitiveControlsAndNavigation() {
         QTemporaryDir dir;
         QVERIFY(createProject(dir, QString(trainers).replace("sParty_Test", "customTeam"), QString(parties).replace("sParty_Test", "customTeam")));
-        BattleEditor editor; QVERIFY(editor.setScene(dir.path(), "Test", {}));
+        BattleEditor editor; QVERIFY(openWholeProject(editor, dir.path(), "Test", {}));
         auto *tree = editor.findChild<QTreeWidget *>("battleFields");
         auto *files = editor.findChild<QComboBox *>("battleFiles");
         auto *source = editor.findChild<QPlainTextEdit *>("battleSource");
@@ -202,7 +219,7 @@ private slots:
         QVERIFY(QDir(dir.path()).mkpath("include/constants"));
         QFile constants(dir.filePath("include/constants/species.h"));
         QVERIFY(constants.open(QIODevice::WriteOnly)); constants.write("#define SPECIES_TREECKO 1\n#define MOVE_POUND 1\n#define ITEM_NONE 0\n"); constants.close();
-        BattleEditor editor; QVERIFY(editor.setScene(dir.path(), "Test", {}));
+        BattleEditor editor; QVERIFY(openWholeProject(editor, dir.path(), "Test", {}));
         auto *tree = editor.findChild<QTreeWidget *>("battleFields");
         auto *source = editor.findChild<QPlainTextEdit *>("battleSource");
         QWidget host;
@@ -230,6 +247,74 @@ private slots:
         QVERIFY(speciesEditor && speciesEditor->completer());
         auto *model = speciesEditor->completer()->model();
         QCOMPARE(model->rowCount(), 1); QCOMPARE(model->index(0,0).data().toString(), QString("SPECIES_TREECKO"));
+    }
+    void currentMapExpansionTrainers() {
+        QTemporaryDir dir; QVERIFY(createProject(dir));
+        const QString other = "\n=== TRAINER_OTHER ===\nName: BOB\nPic: Hiker\n\nZubat\nLevel: 10\n";
+        QVERIFY(writeFile(dir.filePath("src/data/trainers.party"), expansion));
+        QVERIFY(writeFile(dir.filePath("src/data/trainers_frlg.party"), other));
+        const auto a = dir.filePath("data/maps/A/scripts.inc");
+        const auto b = dir.filePath("data/maps/B/scripts.inc");
+        const auto empty = dir.filePath("data/maps/Empty/scripts.inc");
+        QVERIFY(writeFile(a, "Battle::\n trainerbattle_single TRAINER_TEST, Intro, Defeat\n @ TRAINER_OTHER\n .string \"TRAINER_OTHER$\"\n"));
+        QVERIFY(writeFile(b, "Battle::\n trainerbattle_single TRAINER_OTHER, Intro, Defeat\n"));
+        QVERIFY(writeFile(empty, "OnEnter::\n end\n"));
+        BattleEditor editor; QVERIFY(editor.setScene(dir.path(), "A", a));
+        auto *scope = editor.findChild<QComboBox *>("battleScope");
+        auto *files = editor.findChild<QComboBox *>("battleFiles");
+        QCOMPARE(scope->currentIndex(), 0);
+        QCOMPARE(visibleRecords(editor), QStringList{"TRAINER_TEST"});
+        scope->setCurrentIndex(1); QCOMPARE(visibleRecords(editor).size(), 2);
+        QVERIFY(editor.setScene(dir.path(), "B", b));
+        QCOMPARE(scope->currentIndex(), 0); QCOMPARE(files->currentIndex(), 1);
+        QCOMPARE(visibleRecords(editor), QStringList{"TRAINER_OTHER"});
+        // A shared script path uses the resolved folder, regardless of map name.
+        QVERIFY(editor.setScene(dir.path(), "Shared", a));
+        QCOMPARE(files->currentIndex(), 0); QCOMPARE(visibleRecords(editor), QStringList{"TRAINER_TEST"});
+        findField(editor.findChild<QTreeWidget *>("battleFields"), ".lvl")->setText(1, "30");
+        answer(QMessageBox::Cancel);
+        QVERIFY(!editor.setScene(dir.path(), "B", b));
+        QCOMPARE(visibleRecords(editor), QStringList{"TRAINER_TEST"});
+        QVERIFY(editor.findChild<QLabel *>("battleScene")->text().contains("Shared"));
+        answer(QMessageBox::Discard);
+        QVERIFY(editor.setScene(dir.path(), "Empty", empty));
+        QVERIFY(visibleRecords(editor).isEmpty());
+        QCOMPARE(editor.findChild<QTreeWidget *>("battleFields")->topLevelItemCount(), 0);
+        QVERIFY(!editor.findChild<QPushButton *>("deleteBattleRecord")->isEnabled());
+        QVERIFY(editor.findChild<QLabel *>("battleScene")->text().contains("No trainer IDs"));
+        scope->setCurrentIndex(1); QCOMPARE(visibleRecords(editor).size(), 2);
+    }
+    void currentMapStockPartiesAndPoryscript() {
+        QTemporaryDir dir;
+        const auto trainerSource = QString(trainers).replace("};\n", " [TRAINER_OTHER] = {.party = NO_ITEM_DEFAULT_MOVES(unrelatedTeam)},\n};\n");
+        QVERIFY(createProject(dir, trainerSource, parties + "static const struct TrainerMonNoItemDefaultMoves unrelatedTeam[] = {{.lvl = 9, .species = SPECIES_ZUBAT}};\n"));
+        const auto scripts = dir.filePath("data/maps/A/scripts.inc");
+        QVERIFY(writeFile(scripts, "trainerbattle_single TRAINER_OTHER, Intro, Defeat\n")); // stale generated file
+        QVERIFY(writeFile(dir.filePath("data/maps/A/scripts.pory"), "script Battle { trainerbattle(TRAINER_TEST, Intro, Defeat) } // TRAINER_OTHER\n"));
+        QVERIFY(writeFile(dir.filePath("data/maps/A/text.inc"), "Text::\n .string \"TRAINER_OTHER$\"\n"));
+        BattleEditor editor; QVERIFY(editor.setScene(dir.path(), "A", scripts, true, false));
+        QCOMPARE(visibleRecords(editor), QStringList{"[TRAINER_TEST]"});
+        auto *files = editor.findChild<QComboBox *>("battleFiles");
+        editor.findChild<QPushButton *>("goToBattleParty")->click();
+        QCOMPARE(files->currentIndex(), 1);
+        QCOMPARE(visibleRecords(editor), QStringList{"sParty_Test"});
+        editor.findChild<QLineEdit *>("battleSearch")->setText("ZUBAT");
+        QVERIFY(visibleRecords(editor).isEmpty());
+        editor.findChild<QComboBox *>("battleScope")->setCurrentIndex(1);
+        QCOMPARE(visibleRecords(editor), QStringList{"unrelatedTeam"});
+        editor.findChild<QLineEdit *>("battleSearch")->clear();
+        editor.findChild<QComboBox *>("battleScope")->setCurrentIndex(0);
+        files->setCurrentIndex(0);
+        // Battle Scripts saves must update the map index without reopening it.
+        const auto cleanScript = dir.filePath("data/maps/B/scripts.inc");
+        QVERIFY(writeFile(cleanScript, "OnEnter::\n end\n"));
+        QVERIFY(editor.setScene(dir.path(), "B", cleanScript));
+        QVERIFY(visibleRecords(editor).isEmpty());
+        auto *sceneScripts = editor.findChild<DialogueEditor *>("battleScripts");
+        auto *text = sceneScripts->findChild<QPlainTextEdit *>("sceneScript");
+        text->setPlainText("Battle::\n trainerbattle_single TRAINER_OTHER, Intro, Defeat\n");
+        QVERIFY(sceneScripts->saveChanges());
+        QCOMPARE(visibleRecords(editor), QStringList{"[TRAINER_OTHER]"});
     }
     void expansionSourceEditing() {
         BattleDocument doc; QVERIFY(doc.parse(expansion)); QVERIFY(doc.isPartySource());
@@ -263,7 +348,7 @@ private slots:
         QFile party(dir.filePath("src/data/trainers.party")); QVERIFY(party.open(QIODevice::WriteOnly));
         party.write(expansion.toUtf8()); party.close();
         // The fixture includes stock headers: .party must win over generated C.
-        BattleEditor editor; QVERIFY(editor.setScene(dir.path(), "Test", {}));
+        BattleEditor editor; QVERIFY(openWholeProject(editor, dir.path(), "Test", {}));
         auto *files = editor.findChild<QComboBox *>("battleFiles");
         QCOMPARE(files->count(), 1);
         QCOMPARE(files->currentData().toString(), QString("src/data/trainers.party"));
@@ -324,7 +409,7 @@ private slots:
         QTemporaryDir dir; QVERIFY(createProject(dir));
         QVERIFY(QDir(dir.path()).mkpath("src/data/trainers"));
         QVERIFY(QFile::rename(dir.filePath("src/data/trainer_parties.h"), dir.filePath("src/data/trainers/parties.h")));
-        BattleEditor editor; QVERIFY(editor.setScene(dir.path(), "Test", {}));
+        BattleEditor editor; QVERIFY(openWholeProject(editor, dir.path(), "Test", {}));
         auto *files = editor.findChild<QComboBox *>("battleFiles");
         QCOMPARE(files->itemData(1).toString(), QString("src/data/trainers/parties.h"));
         files->setCurrentIndex(1);
@@ -346,7 +431,7 @@ private slots:
         QFETCH(QString, macro);
         QTemporaryDir dir;
         QVERIFY(createProject(dir, QString(trainers).replace("{.NoItemCustomMoves = sParty_Test}", macro + "(sParty_Test)")));
-        BattleEditor editor; QVERIFY(editor.setScene(dir.path(), "Test", {}, true, false));
+        BattleEditor editor; QVERIFY(openWholeProject(editor, dir.path(), "Test", {}, true, false));
         // C trainer data is still available when scene scripts use Poryscript.
         QVERIFY(editor.findChild<QPlainTextEdit *>("battleSource")->isEnabled());
         auto *go = editor.findChild<QPushButton *>("goToBattleParty"); QVERIFY(go->isEnabled());
@@ -391,7 +476,7 @@ private slots:
                     QVERIFY(checked > 500);
                 }
             }
-            BattleEditor editor; QVERIFY(editor.setScene(project, "Test", {}));
+            BattleEditor editor; QVERIFY(openWholeProject(editor, project, "Test", {}));
             auto *go = editor.findChild<QPushButton *>("goToBattleParty");
             auto *records = editor.findChild<QListWidget *>("battleRecords");
             // TRAINER_NONE has no party. The next stock trainer uses a macro.
@@ -404,7 +489,7 @@ private slots:
     }
     void crlfUndoAndSave() {
         QTemporaryDir dir; QVERIFY(createProject(dir, QString(trainers).replace("\n", "\r\n")));
-        BattleEditor editor; QVERIFY(editor.setScene(dir.path(), "Test", {}));
+        BattleEditor editor; QVERIFY(openWholeProject(editor, dir.path(), "Test", {}));
         auto *tree = editor.findChild<QTreeWidget *>("battleFields");
         auto *source = editor.findChild<QPlainTextEdit *>("battleSource");
         findField(tree, ".doubleBattle")->setText(1, "TRUE");
@@ -426,7 +511,7 @@ private slots:
             QVERIFY(file.open(QIODevice::WriteOnly)); file.write(pair.second.toUtf8());
         }
         BattleEditor editor;
-        QVERIFY(editor.setScene(dir.path(), "Test", dir.filePath("data/maps/Test/scripts.inc")));
+        QVERIFY(openWholeProject(editor, dir.path(), "Test", dir.filePath("data/maps/Test/scripts.inc")));
         auto *records = editor.findChild<QListWidget *>("battleRecords");
         auto *fields = editor.findChild<QTreeWidget *>("battleFields");
         QCOMPARE(records->count(), 1);
@@ -445,7 +530,7 @@ private slots:
         QVERIFY(!editor.saveChanges());
         QVERIFY(editor.hasUnsavedChanges());
         QTimer::singleShot(0, [] { auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()); if (box) box->button(QMessageBox::Discard)->click(); });
-        QVERIFY(editor.setScene({}, {}, {}));
+        QVERIFY(openWholeProject(editor, {}, {}, {}));
         QVERIFY(!editor.hasUnsavedChanges());
         QCOMPARE(records->count(), 0);
     }

@@ -364,6 +364,7 @@ void MainWindow::initCustomUI() {
         updateWindowTitle();
     });
     connect(battleEditor, &PorymapZ::BattleEditor::sourceSaved, dialogueEditor, &PorymapZ::DialogueEditor::sourceSaved);
+    connect(dialogueEditor, &PorymapZ::DialogueEditor::sourceSaved, battleEditor, &PorymapZ::BattleEditor::refreshScene);
     connect(dialogueEditor, &PorymapZ::DialogueEditor::sourceSaved, this, [this](const QString &path) {
         if (!editor || !editor->project) return;
         // A shared script may be used by several already loaded maps.

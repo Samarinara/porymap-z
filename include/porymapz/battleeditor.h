@@ -2,6 +2,7 @@
 #include "porymapz/battledocument.h"
 #include "porymapz/dialoguedocument.h"
 #include <QWidget>
+#include <QSet>
 class QComboBox;
 class QListWidget;
 class QLineEdit;
@@ -21,6 +22,7 @@ public:
     bool confirmChanges();
     bool saveChanges();
     bool hasUnsavedChanges() const;
+    void refreshScene();
 protected:
     bool event(QEvent *event) override;
 signals:
@@ -34,6 +36,8 @@ private:
     void setDirty(bool dirty);
     void mutate(bool remove);
     void filterRecords();
+    void refreshSceneIndex();
+    int sceneFile() const;
     void updateActions();
     void updateSummaries();
     void syncSource();
@@ -45,11 +49,18 @@ private:
     bool containsData(const QString &path, int kind) const;
     QString m_root;
     QString m_path;
+    QString m_mapName;
+    QString m_scriptsPath;
+    QSet<QString> m_sceneTrainers;
+    QSet<QString> m_sceneParties;
+    bool m_sceneIndexed = false;
     bool m_dirty = false;
     int m_fileIndex = -1;
     DialogueDocument m_file;
     BattleDocument m_document;
     QComboBox *m_files;
+    QComboBox *m_scope;
+    QLabel *m_scene;
     QListWidget *m_records;
     QLineEdit *m_search;
     QTreeWidget *m_fields;

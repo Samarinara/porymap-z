@@ -5,6 +5,8 @@
 #include <QFile>
 #include <QDir>
 #include <QPlainTextEdit>
+#include <QTabWidget>
+#include <QListWidget>
 #include "mainwindow.h"
 #include "porymapz/dialogueeditor.h"
 #include "porymapz/battleeditor.h"
@@ -61,6 +63,13 @@ private slots:
         QCOMPARE(tabs->tabText(MainTab::Battle), QString("Battle *"));
         QVERIFY(battle->saveChanges());
         QCOMPARE(tabs->tabText(MainTab::Battle), QString("Battle"));
+        auto *records = battle->findChild<QListWidget *>("battleRecords");
+        QVERIFY(!records->currentItem());
+        dialogue->findChild<QTabWidget *>("dialogueViews")->setCurrentIndex(1);
+        dialogue->findChild<QPlainTextEdit *>("sceneScript")->setPlainText("Battle::\n trainerbattle_single TRAINER_TEST, Intro, Defeat\n");
+        QVERIFY(dialogue->saveChanges());
+        QVERIFY(records->currentItem());
+        QCOMPARE(records->currentItem()->toolTip(), QString("[TRAINER_TEST]"));
     }
 };
 QTEST_MAIN(MainWindowTest)
