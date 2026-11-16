@@ -114,6 +114,9 @@ def copy_project(source, target):
                 result.append(name)
         return result
     shutil.copytree(source, target, ignore=ignore)
+    # Expansion requires git history or this opt-out marker. The disposable
+    # snapshot intentionally has no .git; leave the original project untouched.
+    (Path(target) / '.histignore').touch()
 
 
 def main():

@@ -124,6 +124,16 @@ void CB2_NewGame(void) {
         self.assertFalse((target / 'normal.sav').exists())
         self.assertFalse((target / 'normal.gba').exists())
 
+    def test_snapshot_opts_out_of_history_check_without_changing_original(self):
+        (self.root / '.git').mkdir()
+        (self.root / '.git/HEAD').write_text('ref: refs/heads/master\n')
+        target = Path(self.temp.name) / 'snapshot'
+        playtest.copy_project(self.root, target)
+        self.assertTrue((target / '.histignore').is_file())
+        self.assertFalse((target / '.git').exists())
+        self.assertFalse((self.root / '.histignore').exists())
+        self.assertEqual((self.root / '.git/HEAD').read_text(), 'ref: refs/heads/master\n')
+
     @unittest.skipIf(os.name != 'posix', 'POSIX executable fixture')
     def test_symlink_cannot_modify_original(self):
         (self.root / 'src/link.c').symlink_to(self.root / 'src/new_game.c')
@@ -132,7 +142,8 @@ void CB2_NewGame(void) {
 
     def run_helper(self, fail=False):
         # A real make invocation and executable emulate the boundary without a GBA toolchain.
-        (self.root / 'Makefile').write_text('all:\n\t' + ('false' if fail else 'touch demo.gba') + '\n')
+        (self.root / 'Makefile').write_text(
+            'all:\n\ttest -f .histignore\n\t' + ('false' if fail else 'touch demo.gba') + '\n')
         record = Path(self.temp.name) / 'emulator-input.json'
         emulator = Path(self.temp.name) / 'fake emulator'
         emulator.write_text('#!' + sys.executable + '\nimport json, pathlib, sys\n'
