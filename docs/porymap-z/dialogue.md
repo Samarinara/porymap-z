@@ -1,8 +1,8 @@
 # Dialogue editing (first milestone)
 
-Open a pokeemerald project in Porymap-Z, select a map, and choose **Dialogue** in the main tab bar beside Map, Events, Header, Connections, and Wild Pokemon. This embedded workspace follows the active scene.
+Open a pokeemerald (including expansion's Hoenn and Kanto maps) or pokefirered project in Porymap-Z, select a map, and choose **Dialogue** in the main tab bar beside Map, Events, Header, Connections, and Wild Pokemon. This embedded workspace follows the active scene. Assembly availability follows the selected map's actual script file, including assembly maps in projects with Poryscript enabled elsewhere.
 
-1. Leave the scope on **Current scene** to see the selected map's UTF-8 `.inc` and `.s` files. Its resolved script file is selected first; scenes that share scripts use the shared map's folder. Sibling and nested script/text files in that folder are included. Choose **Whole project** to browse dialogue elsewhere under `data/`.
+1. Leave the scope on **Current scene** to see the selected map's UTF-8 `.inc` and `.s` files. Its resolved script file is selected first; scenes that share scripts use the shared map's folder. Sibling and nested script/text files in that folder are included. Map-event script references and their shared script/text labels are followed into other files, including expansion's `data/scripts/trainers_frlg.inc`. Shared files appear in full in the file selector. Choose **Whole project** to browse dialogue elsewhere under `data/`.
 2. Search labels or text within that file and select a dialogue label.
 3. Edit the quoted text. Each physical editor line corresponds to one assembly `.string` operand. Game escape sequences remain visible: `\n` is a game line break, `\l` scrolls a line, and `\p` advances a paragraph. Keep placeholders such as `{PLAYER}`, formatting controls, and the final `$` where the script requires them. Escape a quote as `\"` and a literal backslash as `\\`.
 4. Click **Save Dialogue**, or use the main Save/Save Project action (Ctrl+S). Saves take effect directly in the source file. Build your game and test the result in your normal emulator.

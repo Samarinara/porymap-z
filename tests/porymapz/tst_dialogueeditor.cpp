@@ -16,6 +16,32 @@
 class DialogueEditorTest : public QObject {
     Q_OBJECT
 private slots:
+    void sharedRouteDialogue() {
+        QTemporaryDir dir;
+        const auto write = [&](const QString &name, const QByteArray &text) {
+            const auto path = dir.filePath(name);
+            QDir().mkpath(QFileInfo(path).path());
+            QFile file(path);
+            return file.open(QIODevice::WriteOnly) && file.write(text) == text.size();
+        };
+        QVERIFY(write("data/maps/Route3_Frlg/scripts.inc", "Route3_MapScripts::\n .byte 0\n"));
+        QVERIFY(write("data/maps/Route3_Frlg/map.json", R"({"object_events":[{"script":"Route3_Trainer"}]})"));
+        QVERIFY(write("data/scripts/trainers_frlg.inc", "Route3_Trainer::\n msgbox Shared_Text\n end\n"));
+        QVERIFY(write("data/text/shared.inc", "Shared_Text::\n .string \"Hello Kanto!$\"\n"));
+        PorymapZ::DialogueEditor editor;
+        QVERIFY(editor.setScene(dir.path(), "Route3_Frlg", dir.filePath("data/maps/Route3_Frlg/scripts.inc")));
+        auto *files = editor.findChild<QComboBox *>("dialogueFiles");
+        QVERIFY(files);
+        QVERIFY(files->findText("data/scripts/trainers_frlg.inc") >= 0);
+        QVERIFY(files->findText("data/text/shared.inc") >= 0);
+        files->setCurrentIndex(files->findText("data/text/shared.inc"));
+        auto *text = editor.findChild<QPlainTextEdit *>("dialogueText");
+        QCOMPARE(text->toPlainText(), QString("Hello Kanto!$"));
+        text->setPlainText("Edited Kanto!$");
+        QVERIFY(editor.saveChanges());
+        QFile saved(dir.filePath("data/text/shared.inc")); QVERIFY(saved.open(QIODevice::ReadOnly));
+        QVERIFY(saved.readAll().contains("Edited Kanto!$"));
+    }
     static void answer(QMessageBox::StandardButton choice) {
         QTimer::singleShot(0, [choice] {
             auto *message = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());

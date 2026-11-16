@@ -3,8 +3,99 @@
 #include <QFile>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QDirIterator>
+#include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QSet>
+#include <QMap>
 
 namespace PorymapZ {
+
+SceneSources resolveSceneSources(const QString &root, const QString &mapName, const QString &scriptsPath) {
+    SceneSources result;
+    const QString canonicalRoot = QFileInfo(root).canonicalFilePath();
+    if (canonicalRoot.isEmpty() || scriptsPath.isEmpty()) return result;
+    const QString scripts = QFileInfo(scriptsPath).isAbsolute() ? scriptsPath : root + '/' + scriptsPath;
+    const QString folder = QFileInfo(scripts).absolutePath();
+    const auto inside = [&](const QString &path) {
+        const QFileInfo info(path);
+        return !info.isSymLink() && info.canonicalFilePath().startsWith(canonicalRoot + '/');
+    };
+    if (QFileInfo(folder).canonicalFilePath() != canonicalRoot && !inside(folder)) return result;
+    const QRegularExpression noise(QStringLiteral("\"(?:\\\\.|[^\"\\\\])*\"|/\\*[\\s\\S]*?\\*/|//[^\\r\\n]*|@[^\\r\\n]*"));
+    const QRegularExpression tokens(QStringLiteral("\\b[A-Za-z_][A-Za-z0-9_]*\\b"));
+    const QRegularExpression labels(QStringLiteral("(?m)^([A-Za-z_][A-Za-z0-9_]*)::?"));
+    QSet<QString> pending, visited, localPaths;
+    const auto references = [&](const QString &code) {
+        auto matches = tokens.globalMatch(code);
+        while (matches.hasNext()) pending.insert(matches.next().captured());
+    };
+    QDirIterator local(folder, {"*.inc", "*.s", "*.pory"}, QDir::Files, QDirIterator::Subdirectories);
+    while (local.hasNext()) localPaths.insert(local.next());
+    localPaths.insert(scripts);
+    for (const auto &path : localPaths) {
+        if (!inside(path)) continue;
+        const QFileInfo info(path);
+        if (info.suffix() == "inc" && QFileInfo::exists(info.path() + '/' + info.completeBaseName() + ".pory")) continue;
+        DialogueDocument document; QString error;
+        if (!document.load(path, &error)) continue;
+        result.paths.append(path);
+        result.readable = true;
+        const QString code = QString(document.sourceText()).replace(noise, " ");
+        auto definitions = labels.globalMatch(code);
+        while (definitions.hasNext()) visited.insert(definitions.next().captured(1));
+        result.code += code + '\n';
+        references(code);
+    }
+    // Object/coordinate/background events may enter a shared script directly,
+    // without any reference in the map's own scripts.inc (Kanto routes do this).
+    QFile map(root + "/data/maps/" + mapName + "/map.json");
+    if (!map.exists()) map.setFileName(folder + "/map.json");
+    if (inside(map.fileName()) && map.open(QIODevice::ReadOnly)) {
+        const auto object = QJsonDocument::fromJson(map.readAll()).object();
+        for (const auto &key : {"object_events", "coord_events", "bg_events"})
+            for (const auto &event : object.value(key).toArray())
+                references(event.toObject().value("script").toString());
+    }
+
+    struct Block { QString path, code; };
+    QMap<QString, Block> blocks;
+    QDirIterator shared(root + "/data", {"*.inc", "*.s"}, QDir::Files, QDirIterator::Subdirectories);
+    while (shared.hasNext()) {
+        const QString path = shared.next();
+        if (localPaths.contains(path) || !inside(path)) continue;
+        const QFileInfo info(path);
+        if (QFileInfo::exists(info.path() + '/' + info.completeBaseName() + ".pory")) continue;
+        DialogueDocument document; QString error;
+        if (!document.load(path, &error)) continue;
+        const QString code = QString(document.sourceText()).replace(noise, " ");
+        auto matches = labels.globalMatch(code);
+        QRegularExpressionMatch previous;
+        while (matches.hasNext()) {
+            const auto next = matches.next();
+            if (previous.hasMatch()) blocks.insert(previous.captured(1), {path, code.mid(previous.capturedStart(), next.capturedStart() - previous.capturedStart())});
+            previous = next;
+        }
+        if (previous.hasMatch()) blocks.insert(previous.captured(1), {path, code.mid(previous.capturedStart())});
+    }
+    while (!pending.isEmpty()) {
+        const QString label = *pending.cbegin();
+        pending.remove(label);
+        if (visited.contains(label)) continue;
+        visited.insert(label);
+        const auto it = blocks.constFind(label);
+        if (it == blocks.cend()) continue;
+        result.paths.append(it->path);
+        result.code += it->code + '\n';
+        result.readable = true;
+        references(it->code);
+    }
+    result.paths.removeDuplicates();
+    result.paths.sort();
+    return result;
+}
 
 bool DialogueDocument::load(const QString &path, QString *error) {
     QFile file(path);

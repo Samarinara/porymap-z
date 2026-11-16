@@ -697,28 +697,11 @@ void BattleEditor::refreshScene() {
 void BattleEditor::refreshSceneIndex() {
     m_sceneTrainers.clear(); m_sceneParties.clear(); m_sceneIndexed = false;
     if (m_root.isEmpty() || m_mapName.isEmpty() || m_scriptsPath.isEmpty()) return;
-    const QString scripts = QFileInfo(m_scriptsPath).isAbsolute() ? m_scriptsPath : m_root + '/' + m_scriptsPath;
-    const QString folder = QFileInfo(scripts).absolutePath();
-    const QString canonical = QFileInfo(folder).canonicalFilePath();
-    if (canonical != m_root && !canonical.startsWith(m_root + '/')) return;
-    QSet<QString> paths{scripts};
-    QDirIterator it(folder, {"*.inc", "*.s", "*.pory"}, QDir::Files, QDirIterator::Subdirectories);
-    while (it.hasNext()) paths.insert(it.next());
-    // Strings and comments must not turn dialogue or commented-out battles into
-    // trainer references. Prefer Poryscript over its stale generated .inc file.
-    const QRegularExpression noise(QStringLiteral("\"(?:\\\\.|[^\"\\\\])*\"|/\\*[\\s\\S]*?\\*/|//[^\\r\\n]*|@[^\\r\\n]*"));
+    const auto scene = resolveSceneSources(m_root, m_mapName, m_scriptsPath);
+    m_sceneIndexed = scene.readable;
     const QRegularExpression ids("\\bTRAINER_[A-Za-z0-9_]+\\b");
-    for (const auto &path : paths) {
-        const auto info = QFileInfo(path);
-        if (!editable(path)) continue;
-        if (info.suffix() == "inc" && QFileInfo::exists(info.path() + '/' + info.completeBaseName() + ".pory")) continue;
-        DialogueDocument document; QString error;
-        if (!document.load(path, &error)) continue;
-        m_sceneIndexed = true;
-        const auto source = QString(document.sourceText()).replace(noise, " ");
-        auto matches = ids.globalMatch(source);
-        while (matches.hasNext()) m_sceneTrainers.insert(matches.next().captured());
-    }
+    auto matches = ids.globalMatch(scene.code);
+    while (matches.hasNext()) m_sceneTrainers.insert(matches.next().captured());
     // Stock C parties live separately from trainer definitions; use the actual
     // party references, never a guessed name derived from TRAINER_ constants.
     if (!m_files->count()) return;

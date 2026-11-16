@@ -316,6 +316,45 @@ private slots:
         QVERIFY(sceneScripts->saveChanges());
         QCOMPARE(visibleRecords(editor), QStringList{"[TRAINER_OTHER]"});
     }
+    void kantoRouteSharedTrainers() {
+        QTemporaryDir dir; QVERIFY(createProject(dir));
+        QVERIFY(writeFile(dir.filePath("src/data/trainers.party"), expansion));
+        QVERIFY(writeFile(dir.filePath("src/data/trainers_frlg.party"),
+            "=== TRAINER_ROUTE ===\nName: ROUTE\n\nPidgey\nLevel: 9\n\n"
+            "=== TRAINER_REMATCH ===\nName: REMATCH\n\nPidgeotto\nLevel: 20\n\n"
+            "=== TRAINER_ELSEWHERE ===\nName: OTHER\n\nZubat\nLevel: 10\n"));
+        const auto scripts = dir.filePath("data/maps/Route3_Frlg/scripts.inc");
+        QVERIFY(writeFile(scripts, "Route3_MapScripts::\n .byte 0\n"));
+        QVERIFY(writeFile(dir.filePath("data/maps/Route3_Frlg/map.json"),
+            R"({"object_events":[{"script":"Route3_Trainer"}]})"));
+        QVERIFY(writeFile(dir.filePath("data/scripts/trainers_frlg.inc"),
+            "Route3_Trainer::\n trainerbattle_single TRAINER_ROUTE, Intro, Defeat\n"
+            " goto_if_set FLAG_REMATCH, Route3_Rematch\n end\n"
+            "Route3_Rematch::\n trainerbattle_rematch TRAINER_REMATCH, Intro, Defeat\n end\n"
+            "Route4_Trainer::\n trainerbattle_single TRAINER_ELSEWHERE, Intro, Defeat\n end\n"));
+        BattleEditor editor; QVERIFY(editor.setScene(dir.path(), "Route3_Frlg", scripts));
+        QCOMPARE(editor.findChild<QComboBox *>("battleFiles")->currentData().toString(), QString("src/data/trainers_frlg.party"));
+        QCOMPARE(visibleRecords(editor), (QStringList{"TRAINER_ROUTE", "TRAINER_REMATCH"}));
+        const auto route1 = dir.filePath("data/maps/Route1_Frlg/scripts.inc");
+        QVERIFY(writeFile(route1, "Route1_MapScripts::\n .byte 0\n"));
+        QVERIFY(editor.setScene(dir.path(), "Route1_Frlg", route1));
+        QVERIFY(visibleRecords(editor).isEmpty());
+    }
+    void kantoRoutesCorpus() {
+        const auto root = qEnvironmentVariable("PORYMAP_Z_EXPANSION_PROJECT");
+        if (root.isEmpty()) QSKIP("Set PORYMAP_Z_EXPANSION_PROJECT for real Kanto scene checks.");
+        DialogueEditor dialogue;
+        QVERIFY(dialogue.setScene(root, "Route1_Frlg", root + "/data/maps/Route1_Frlg/scripts.inc"));
+        auto *entries = dialogue.findChild<QListWidget *>("dialogueEntries");
+        QVERIFY(entries);
+        QVERIFY(entries->count() > 0);
+        BattleEditor battle;
+        QVERIFY(battle.setScene(root, "Route3_Frlg", root + "/data/maps/Route3_Frlg/scripts.inc"));
+        const auto records = visibleRecords(battle);
+        QVERIFY2(records.contains("TRAINER_LASS_JANICE"), qPrintable(records.join(", ")));
+        QVERIFY(records.contains("TRAINER_LASS_ROBIN"));
+        QVERIFY(!records.contains("TRAINER_LASS_CRISSY"));
+    }
     void expansionSourceEditing() {
         BattleDocument doc; QVERIFY(doc.parse(expansion)); QVERIFY(doc.isPartySource());
         QCOMPARE(doc.records().size(), 2);

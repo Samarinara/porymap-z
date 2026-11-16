@@ -1272,11 +1272,15 @@ bool MainWindow::setMap(const QString &mapName) {
     updateTilesetEditor();
 
 #ifdef PORYMAP_Z
-    battleEditor->setScene(editor->project->root, editor->map->name(), editor->map->getScriptsFilepath(),
-        projectConfig.baseGameVersion == BaseGameVersion::pokeemerald || projectConfig.baseGameVersion == BaseGameVersion::pokefirered,
-        !projectConfig.usePoryScript);
-    dialogueEditor->setScene(editor->project->root, editor->map->name(), editor->map->getScriptsFilepath(),
-        projectConfig.baseGameVersion == BaseGameVersion::pokeemerald && !projectConfig.usePoryScript);
+    const auto scriptsPath = editor->map->getScriptsFilepath();
+    const bool supportedScene = projectConfig.baseGameVersion == BaseGameVersion::pokeemerald
+        || projectConfig.baseGameVersion == BaseGameVersion::pokefirered;
+    const bool assemblySource = scriptsPath.endsWith(".inc", Qt::CaseInsensitive)
+        || scriptsPath.endsWith(".s", Qt::CaseInsensitive);
+    battleEditor->setScene(editor->project->root, editor->map->name(), scriptsPath,
+        supportedScene, assemblySource);
+    dialogueEditor->setScene(editor->project->root, editor->map->name(), scriptsPath,
+        supportedScene && assemblySource);
 #endif
     emit mapOpened(editor->map);
 

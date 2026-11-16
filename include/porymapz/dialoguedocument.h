@@ -3,8 +3,19 @@
 #include <QByteArray>
 #include <QString>
 #include <QVector>
+#include <QStringList>
 
 namespace PorymapZ {
+
+struct SceneSources {
+    QStringList paths;
+    QString code;
+    bool readable = false;
+};
+
+// Follow event-script labels into shared source without treating every trainer
+// in a shared file as a trainer on the selected map.
+SceneSources resolveSceneSources(const QString &root, const QString &mapName, const QString &scriptsPath);
 
 // Edits only quoted operands. All other source bytes remain untouched.
 class DialogueDocument {

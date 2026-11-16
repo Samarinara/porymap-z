@@ -172,9 +172,13 @@ void DialogueEditor::scan() {
     if (canonicalFolder != m_root && !canonicalFolder.startsWith(m_root + '/')) return;
     QStringList paths;
     int skipped = 0;
-    QDirIterator it(folder, {"*.inc", "*.s"}, QDir::Files, QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        const QString path = it.next();
+    QStringList candidates;
+    if (m_scope->currentIndex() == 0) candidates = resolveSceneSources(m_root, m_mapName, m_scriptsPath).paths;
+    else {
+        QDirIterator it(folder, {"*.inc", "*.s"}, QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext()) candidates.append(it.next());
+    }
+    for (const QString &path : candidates) {
         if (!editablePath(path)) continue;
         DialogueDocument document;
         QString error;
