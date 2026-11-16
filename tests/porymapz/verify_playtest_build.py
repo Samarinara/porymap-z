@@ -26,6 +26,8 @@ def main():
     parser.add_argument('--artifact-dir', type=Path, required=True)
     parser.add_argument('--make-arg', action='append', default=[])
     parser.add_argument('--build-target', choices=('emerald', 'firered', 'leafgreen'), default='')
+    parser.add_argument('--scope', choices=('current', 'nearby', 'reachable', 'full'), default='full')
+    parser.add_argument('--cache-dir', type=Path)
     parser.add_argument('--boot-checker', type=Path,
                         help='Also boot the exported ROM using the headless mGBA checker')
     parser.add_argument('--nm', default='arm-none-eabi-nm')
@@ -73,8 +75,11 @@ print('Verified GBA ROM header and exported build artifacts.', flush=True)
         emulator.chmod(0o755)
         config = dict(root=str(project), emulator=str(emulator), make_args=args.make_arg,
                       build_target=args.build_target,
+                      scope=args.scope,
                       map=args.map, species=args.species, name=args.name, gender=args.gender,
                       level=args.level, x=args.x, y=args.y)
+        if args.cache_dir:
+            config['cache_dir'] = str(args.cache_dir.resolve())
         config_path = temp / 'config.json'
         config_path.write_text(json.dumps(config))
         try:

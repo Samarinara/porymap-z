@@ -10,6 +10,9 @@
 #include <QToolBar>
 #include <QTimer>
 #include <QMessageBox>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QSettings>
 #include "mainwindow.h"
 #include "porymapz/dialogueeditor.h"
 #include "porymapz/battleeditor.h"
@@ -23,6 +26,46 @@
 class MainWindowTest : public QObject {
     Q_OBJECT
 private slots:
+    void playtestScopeControls() {
+        QTemporaryDir root;
+        MainWindow window(nullptr);
+        window.initialize();
+        Project project;
+        project.setRoot(root.path());
+        project.speciesNames = {"SPECIES_TREECKO"};
+        Map map;
+        window.editor->project = &project;
+        window.editor->map = &map;
+        const auto reset = qScopeGuard([&] {
+            window.editor->map = nullptr;
+            window.editor->project = nullptr;
+        });
+        auto *playtest = window.findChild<Playtest *>();
+        QVERIFY(playtest);
+        const QString prefix = "playtest/" + root.path() + "/";
+        for (bool full : {false, true}) {
+            QSettings settings;
+            settings.setValue(prefix + "wholeGame", full);
+            settings.setValue(prefix + "scope", "nearby");
+            QTimer::singleShot(0, &window, [=] {
+                auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                QVERIFY(dialog);
+                auto *whole = dialog->findChild<QCheckBox *>("demoWholeGame");
+                auto *scope = dialog->findChild<QComboBox *>("demoScope");
+                // Always dismiss the modal, including on an assertion failure.
+                const auto dismiss = qScopeGuard([&] { dialog->reject(); });
+                QVERIFY(whole && scope);
+                QCOMPARE(whole->isChecked(), full);
+                QCOMPARE(scope->currentData().toString(), QString("nearby"));
+                QCOMPARE(scope->count(), 3);
+                QCOMPARE(scope->isEnabled(), !full);
+                whole->setChecked(!full);
+                QCOMPARE(scope->isEnabled(), full);
+            });
+            playtest->configure();
+        }
+        QSettings().remove(prefix);
+    }
     void dialogueIsAMainPage() {
         QTemporaryDir config;
         qputenv("XDG_DATA_HOME", config.path().toUtf8());

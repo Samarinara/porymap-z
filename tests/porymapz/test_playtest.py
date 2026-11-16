@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 HELPER = Path(__file__).resolve().parents[2] / 'resources/demo/playtest.py'
 spec = importlib.util.spec_from_file_location('playtest', HELPER)
@@ -51,6 +52,238 @@ void CB2_NewGame(void) {
 ''')
         self.config = dict(root=str(self.root), map='MAP_ROUTE101', name='DEMO', gender=1,
                            species='SPECIES_TREECKO', level=25, x=3, y=7, emulator='unused')
+
+    def scope_fixture(self):
+        for name, connections, warps in (
+                ('Route101', ['MAP_TOWN'], []),
+                ('Town', ['MAP_ROUTE101'], ['MAP_HOUSE']),
+                ('House', [], ['MAP_TOWN']), ('Island', [], [])):
+            folder = self.root / 'data/maps' / name
+            folder.mkdir(parents=True)
+            (folder / 'map.json').write_text(json.dumps(dict(
+                id='MAP_' + name.upper(), name=name, layout='LAYOUT_' + name.upper(),
+                connections=[dict(map=key, direction='up', offset=0) for key in connections],
+                warp_events=[dict(dest_map=key, dest_warp_id='0') for key in warps])))
+        (self.root / 'data/layouts').mkdir()
+        (self.root / 'data/layouts/layouts.json').write_text(json.dumps(dict(layouts=[
+            dict(id='LAYOUT_' + name.upper(), name=name + '_Layout')
+            for name in ('Route101', 'Town', 'House', 'Island')])))
+        (self.root / 'map_data_rules.mk').write_text(
+            'data/layouts/layouts.inc: data/layouts/layouts.json\n'
+            '\t$(MAPJSON) layouts emerald $< data/layouts include/constants\n')
+        path = self.root / 'src/overworld.c'
+        path.write_text('#include "global.h"\n' + path.read_text() + '''
+void WarpIntoMap(void) {
+    ApplyCurrentWarp();
+    LoadCurrentMapData();
+    SetPlayerCoordsFromWarp();
+}
+/* sWarpDestination is normally declared above these functions. */
+''')
+
+    def test_map_scopes_follow_connections_and_warps_without_including_islands(self):
+        self.scope_fixture()
+        expected = dict(current={'MAP_ROUTE101'}, nearby={'MAP_ROUTE101', 'MAP_TOWN'},
+                        reachable={'MAP_ROUTE101', 'MAP_TOWN', 'MAP_HOUSE'})
+        for scope, selected in expected.items():
+            with self.subTest(scope=scope):
+                self.assertEqual(playtest.demo_maps(self.root, dict(self.config, scope=scope))[1], selected)
+        self.assertIsNone(playtest.demo_maps(self.root, dict(self.config, scope='full')))
+        with self.assertRaisesRegex(ValueError, 'Invalid demo scope'):
+            playtest.demo_maps(self.root, dict(self.config, scope='unknown'))
+
+    def test_scope_guards_warps_and_removes_boundary_connections_preserving_events(self):
+        self.scope_fixture()
+        target = Path(self.temp.name) / 'snapshot'
+        playtest.copy_project(self.root, target)
+        selection = playtest.demo_maps(self.root, dict(self.config, scope='current'))
+        playtest.scope_project(target, self.root, self.config, selection)
+        playtest.patch_project(target, self.config, original=self.root, selection=selection)
+        source = (target / 'src/overworld.c').read_text()
+        self.assertIn('sWarpDestination.mapNum == MAP_NUM(MAP_ROUTE101)', source)
+        self.assertIn('sWarpDestination.x = gSaveBlock1Ptr->pos.x;', source)
+        self.assertNotIn('MAP_NUM(MAP_TOWN)', source)
+        town = json.loads((target / 'data/maps/Town/map.json').read_text())
+        self.assertEqual(town['connections'], [])
+        self.assertEqual(town['warp_events'][0]['dest_map'], 'MAP_HOUSE')
+        self.assertIn('--mapjson', (target / 'map_data_rules.mk').read_text())
+        playtest.scope_project(target, self.root, self.config, None)
+        playtest.patch_project(target, self.config, original=self.root)
+        self.assertNotIn('--trim-layouts', (target / 'map_data_rules.mk').read_text())
+        self.assertIn('--mapjson', (target / 'map_data_rules.mk').read_text())
+        self.assertNotIn('sWarpDestination.mapNum', (target / 'src/overworld.c').read_text())
+        self.assertEqual((target / 'data/maps/Town/map.json').read_bytes(),
+                         (self.root / 'data/maps/Town/map.json').read_bytes())
+
+    def test_trim_layouts_keeps_symbols_and_selected_payload(self):
+        folder = self.root / 'data/layouts'
+        folder.mkdir(parents=True)
+        source = ''.join(f'''{name}_Border::
+    .incbin "{name}/border.bin"
+{name}_Blockdata::
+    .incbin "{name}/map.bin"
+    .align 2
+{name}::
+    .4byte {name}_Blockdata
+''' for name in ('Zulu', 'Selected', 'Alpha'))
+        path = folder / 'layouts.inc'
+        path.write_text(source)
+        (self.root / '.porymap-demo-layouts.json').write_text(json.dumps(dict(
+            aliases=dict(Alpha='Selected', Zulu='Selected', OtherRegion='Selected'))))
+        playtest.trim_layouts(self.root)
+        trimmed = path.read_text()
+        self.assertIn('.incbin "Selected/map.bin"', trimmed)
+        self.assertNotIn('.incbin "Zulu/', trimmed)
+        self.assertNotIn('.incbin "Alpha/', trimmed)
+        for name in ('Zulu', 'Alpha'):
+            self.assertIn(f'.set {name}, Selected', trimmed)
+            self.assertIn(f'.global {name}_Blockdata', trimmed)
+        playtest.trim_layouts(self.root)
+        self.assertEqual(path.read_text(), trimmed)
+
+    def test_scope_keeps_alternate_layouts_used_by_scripts_and_shared_engine(self):
+        self.scope_fixture()
+        (self.root / 'data/maps/Route101/scripts.inc').write_text('setmaplayout LAYOUT_HOUSE\n')
+        (self.root / 'src/puzzle.c').write_text('return LAYOUT_TOWN;\n')
+        # Generated definitions must not cause every layout to be retained.
+        (self.root / 'include/constants').mkdir(parents=True)
+        (self.root / 'include/constants/layouts.h').write_text('#define LAYOUT_ISLAND 4\n')
+        target = Path(self.temp.name) / 'snapshot'
+        playtest.copy_project(self.root, target)
+        selection = playtest.demo_maps(self.root, dict(self.config, scope='current'))
+        playtest.scope_project(target, self.root, self.config, selection)
+        manifest = json.loads((target / '.porymap-demo-layouts.json').read_text())
+        self.assertEqual(manifest['aliases'], {'Island_Layout': 'Route101_Layout'})
+
+    def test_cached_sync_preserves_patches_and_build_outputs_but_updates_sources(self):
+        target = Path(self.temp.name) / 'cache/project'
+        (self.root / 'build').mkdir()
+        (self.root / 'build/intro.o').write_bytes(b'original object')
+        constants = self.root / 'include/constants/layouts.h'
+        constants.parent.mkdir(parents=True)
+        constants.write_text('original generated constants')
+        other = self.root / 'src/other.c'
+        other.write_text('original source')
+        removed = self.root / 'src/removed.c'
+        removed.write_text('removed later')
+        playtest.sync_project(self.root, target)
+        playtest.scope_project(target, self.root, self.config, None)
+        playtest.patch_project(target, self.config, original=self.root)
+        patched = target / 'src/new_game.c'
+        timestamp = patched.stat().st_mtime_ns
+        (target / 'build/intro.o').write_bytes(b'demo object')
+        (self.root / 'build/intro.o').write_bytes(b'new original object')
+        other.write_text('updated source')
+        removed.unlink()
+        playtest.sync_project(self.root, target)
+        playtest.scope_project(target, self.root, self.config, None)
+        playtest.patch_project(target, self.config, original=self.root)
+        self.assertEqual(patched.stat().st_mtime_ns, timestamp)
+        self.assertEqual((target / 'build/intro.o').read_bytes(), b'demo object')
+        self.assertEqual((target / 'include/constants/layouts.h').read_text(),
+                         'original generated constants')
+        self.assertEqual((target / 'src/other.c').read_text(), 'updated source')
+        self.assertFalse((target / 'src/removed.c').exists())
+        # A change to a patched original must also reach the next demo.
+        original = self.root / 'src/new_game.c'
+        original.write_text(original.read_text().replace('ResetFlags();', 'ResetFlags(); /* edit */'))
+        playtest.sync_project(self.root, target)
+        playtest.patch_project(target, self.config, original=self.root)
+        self.assertIn('/* edit */', patched.read_text())
+
+    def test_parallel_map_converters_do_not_race_on_generated_outputs(self):
+        converter = self.root / 'converter.py'
+        converter.write_text('''
+from pathlib import Path
+import time
+marker = Path('converter-active')
+marker.mkdir()
+try:
+    time.sleep(0.05)
+finally:
+    marker.rmdir()
+''')
+        command = [sys.executable, str(HELPER), '--mapjson', sys.executable, str(converter)]
+        processes = [subprocess.Popen(command, cwd=self.root, stdout=subprocess.PIPE,
+                                      stderr=subprocess.PIPE, text=True) for _ in range(2)]
+        for process in processes:
+            output, error = process.communicate(timeout=10)
+            self.assertEqual(process.returncode, 0, output + error)
+
+    def test_make_parallelism_respects_explicit_jobs(self):
+        with patch.dict(os.environ, {'MAKEFLAGS': ''}), patch.object(os, 'cpu_count', return_value=8):
+            self.assertEqual(playtest.make_command(['modern']), ['make', '-j8', 'modern'])
+            self.assertEqual(playtest.make_command(['-j3']), ['make', '-j3'])
+        with patch.dict(os.environ, {'MAKEFLAGS': ' -j4 --jobserver-auth=3,4'}):
+            self.assertEqual(playtest.make_command([]), ['make'])
+
+    def test_map_converter_preserves_identical_headers_but_updates_changed_constants(self):
+        folder = self.root / 'include/constants'
+        folder.mkdir(parents=True)
+        path = folder / 'layouts.h'
+        path.write_text('#define LAYOUT_TEST 1\n')
+        os.utime(path, ns=(1_000_000_000, 1_000_000_000))
+        generated = self.root / 'data/maps/groups.inc'
+        generated.parent.mkdir(parents=True)
+        generated.write_text('unchanged map groups')
+        os.utime(generated, ns=(1_000_000_000, 1_000_000_000))
+        normalized = self.root / 'src/data/heal_locations.json'
+        normalized.parent.mkdir(parents=True)
+        normalized.write_text('{}')
+        os.utime(normalized, ns=(1_000_000_000, 1_000_000_000))
+        old_cwd = Path.cwd()
+        try:
+            os.chdir(self.root)
+            for text in ('#define LAYOUT_TEST 1\n', '#define LAYOUT_TEST 2\n'):
+                result = playtest.run_mapjson([sys.executable, '-c',
+                    f'from pathlib import Path; Path("include/constants/layouts.h").write_text({text!r}); '
+                    'Path("data/maps/groups.inc").write_text("unchanged map groups"); '
+                    'Path("src/data/heal_locations.json").write_text("{}")'])
+                self.assertEqual(result, 0)
+                self.assertEqual(path.stat().st_mtime_ns == 1_000_000_000, text.endswith('1\n'))
+                self.assertEqual(generated.stat().st_mtime_ns, 1_000_000_000)
+                self.assertEqual(normalized.stat().st_mtime_ns, 1_000_000_000)
+        finally:
+            os.chdir(old_cwd)
+
+    def test_cache_is_locked_and_must_be_outside_source(self):
+        config = dict(self.config, cache_dir=str(self.root / 'cache'))
+        with self.assertRaisesRegex(ValueError, 'outside'):
+            with playtest.build_directory(config, []):
+                pass
+        config['cache_dir'] = str(Path(self.temp.name) / 'cache')
+        with playtest.build_directory(config, []) as (project, cached):
+            self.assertTrue(cached)
+            with self.assertRaisesRegex(RuntimeError, 'in use'):
+                with playtest.build_directory(config, []):
+                    pass
+
+    @unittest.skipIf(os.name != 'posix', 'POSIX executable fixture')
+    def test_cached_launch_is_incremental_and_discards_demo_saves(self):
+        (self.root / 'Makefile').write_text(
+            'demo.gba: src/new_game.c\n\techo build >> builds.txt\n\ttouch demo.gba\n')
+        emulator = Path(self.temp.name) / 'emulator'
+        emulator.write_text('#!' + sys.executable + '\nfrom pathlib import Path\n'
+                            'assert not Path("demo.sav").exists()\n'
+                            'Path("demo.sav").write_text("disposable save")\n')
+        emulator.chmod(0o755)
+        config = dict(self.config, emulator=str(emulator),
+                      cache_dir=str(Path(self.temp.name) / 'cache'))
+        config_path = Path(self.temp.name) / 'config.json'
+        def run():
+            config_path.write_text(json.dumps(config))
+            result = subprocess.run([sys.executable, str(HELPER), str(config_path)],
+                                    capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        run()
+        cached_project, = (Path(self.temp.name) / 'cache').glob('*/project')
+        self.assertFalse((cached_project / 'demo.sav').exists())
+        run()
+        self.assertEqual((cached_project / 'builds.txt').read_text().splitlines(), ['build'])
+        config['name'] = 'OTHER'
+        run()
+        self.assertEqual(len((cached_project / 'builds.txt').read_text().splitlines()), 2)
+        self.assertFalse((self.root / 'demo.gba').exists())
 
     def test_patch_starts_new_character_at_requested_tile(self):
         playtest.patch_project(self.root, self.config)

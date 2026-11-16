@@ -6,6 +6,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QComboBox>
+#include <QCheckBox>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFile>
@@ -146,6 +147,25 @@ void Playtest::configure() {
     buildTarget->setCurrentIndex(qMax(0, buildTarget->findData(settings.value(prefix + "buildTarget", ""))));
     buildTarget->setToolTip(tr("Expansion: Emerald uses Hoenn maps; FireRed and LeafGreen use Kanto maps."));
     form->addRow(tr("Build target"), buildTarget);
+    auto *wholeGame = new QCheckBox(tr("Build whole game"));
+    wholeGame->setObjectName("demoWholeGame");
+    wholeGame->setChecked(settings.value(prefix + "wholeGame", false).toBool());
+    form->addRow(wholeGame);
+    auto *scope = new QComboBox;
+    scope->setObjectName("demoScope");
+    scope->addItem(tr("Current map (fastest)"), "current");
+    scope->addItem(tr("Current map and immediate connections / warps"), "nearby");
+    scope->addItem(tr("All maps reachable by connections / warps"), "reachable");
+    scope->setCurrentIndex(qMax(0, scope->findData(settings.value(prefix + "scope", "current"))));
+    scope->setEnabled(!wholeGame->isChecked());
+    connect(wholeGame, &QCheckBox::toggled, scope, [scope](bool checked) { scope->setEnabled(!checked); });
+    form->addRow(tr("Demo area"), scope);
+    auto *scopeHelp = new QLabel(tr("Maps outside the demo area cannot be entered. Scripts, Pokémon, battles,\n"
+                                   "and shared engine assets remain available. Script-only destinations may\n"
+                                   "require Build whole game. Unchanged build files are cached for faster replays;\n"
+                                   "the first build still compiles the shared engine using available CPU cores."));
+    scopeHelp->setWordWrap(true);
+    form->addRow(scopeHelp);
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     form->addRow(buttons);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
@@ -166,6 +186,8 @@ void Playtest::configure() {
         for (const auto &arg : QProcess::splitCommand(makeArgs->text())) args.append(arg);
         m_config.insert("make_args", args);
         m_config.insert("build_target", buildTarget->currentData().toString());
+        m_config.insert("scope", wholeGame->isChecked() ? QString("full") : scope->currentData().toString());
+        m_config.insert("cache_dir", QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/playtest");
         settings.setValue(prefix + "name", name->text());
         settings.setValue(prefix + "gender", gender->currentIndex());
         settings.setValue(prefix + "species", species->currentText());
@@ -173,6 +195,8 @@ void Playtest::configure() {
         settings.setValue(prefix + "emulator", executable);
         settings.setValue(prefix + "makeArgs", makeArgs->text());
         settings.setValue(prefix + "buildTarget", buildTarget->currentData());
+        settings.setValue(prefix + "wholeGame", wholeGame->isChecked());
+        settings.setValue(prefix + "scope", scope->currentData());
         dialog.accept();
     });
     if (dialog.exec() != QDialog::Accepted) return;
