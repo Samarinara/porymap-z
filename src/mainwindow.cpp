@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include "playtest.h"
 #ifdef PORYMAP_Z
 #include "porymapz/dialogueeditor.h"
 #include "porymapz/battleeditor.h"
@@ -112,6 +113,7 @@ MainWindow::~MainWindow()
 
     delete label_MapRulerStatus;
     delete undoView;
+    qDeleteAll(findChildren<Playtest *>(QString(), Qt::FindDirectChildrenOnly));
     delete editor;
     delete ui;
 }
@@ -475,6 +477,10 @@ void MainWindow::checkForUpdates(bool) {}
 
 void MainWindow::initEditor() {
     this->editor = new Editor(ui);
+    auto *playtest = new Playtest(this, editor, ui->graphicsView_Map, [this] { return save(false); });
+    connect(playtest, &Playtest::choosingTile, this, [this] {
+        on_mainTabBar_tabBarClicked(MainTab::Map);
+    });
     connect(this->editor, &Editor::eventsChanged, this, &MainWindow::updateEvents);
     connect(this->editor, &Editor::openConnectedMap, this, &MainWindow::onOpenConnectedMap);
     connect(this->editor, &Editor::openEventMap, this, &MainWindow::openEventMap);

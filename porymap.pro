@@ -334,3 +334,6 @@ INCLUDEPATH += include/lib
 INCLUDEPATH += forms
 
 include(src/vendor/QtGifImage/gifimage/qtgifimage.pri)
+
+SOURCES += src/ui/playtest.cpp
+HEADERS += include/ui/playtest.h

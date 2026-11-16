@@ -66,3 +66,25 @@ For an optional round-trip test against a real pokeemerald checkout, run `PORYMA
 Porymap's history and [license](LICENSE.md) are retained. New editor code lives in `src/porymapz` and `include/porymapz`, with a separate qmake entry point to limit upstream merge conflicts. Follow the [upstream maintenance guide](docs/porymap-z/upstream.md) to integrate changes. A weekly GitHub Actions check reports upstream commits; integration is reviewed and tested before merging.
 
 The [Porymap manual](https://huderlem.github.io/porymap/) and [upstream changelog](CHANGELOG.md) cover inherited functionality. Fork-specific behavior is documented under [docs/porymap-z](docs/porymap-z/).
+
+### Play the current map
+
+Click **Play** in the toolbar, configure a demo trainer (name, boy/girl character,
+partner Pokémon, and level), and select an installed GBA emulator. mGBA and common
+VBA executables are detected on `PATH`; **Browse** accepts another emulator that
+opens a ROM passed as its first argument. Click **OK**, then click a tile on the
+current map. Escape or right-click cancels tile selection without editing the map.
+
+Porymap saves current project edits, copies the project into a temporary directory,
+builds a demo ROM, and launches the emulator there. The demo skips the intro and
+starts a fresh character at the selected tile. Its source patches, ROM, and saves
+are discarded when the emulator closes. **Stop** cancels the build or emulator;
+the output window shows build and launch errors.
+
+This requires **Python 3**, **make**, and the project's usual GBA build toolchain.
+The startup adapter supports pret **pokeemerald** and **pokefirered** startup
+functions; forks with different startup code may require an adapter. Projects with
+symlinks are rejected to protect the original files. Optional build arguments
+(e.g. `modern`) and character settings are remembered per project. The initial
+copy and build can take a while and need enough temporary disk space for the
+project. Normal map scripts still run, including any map-specific story events.

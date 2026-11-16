@@ -7,6 +7,9 @@
 #include <QPlainTextEdit>
 #include <QTabWidget>
 #include <QListWidget>
+#include <QToolBar>
+#include <QTimer>
+#include <QMessageBox>
 #include "mainwindow.h"
 #include "porymapz/dialogueeditor.h"
 #include "porymapz/battleeditor.h"
@@ -23,6 +26,21 @@ private slots:
         auto *pages = window.findChild<QStackedWidget *>("mainStackedWidget");
         auto *dialogue = window.findChild<PorymapZ::DialogueEditor *>();
         QVERIFY(tabs && pages && dialogue);
+        auto *play = window.findChild<QAction *>("actionPlayMap");
+        auto *playToolbar = window.findChild<QToolBar *>("playtestToolBar");
+        QVERIFY(play && playToolbar);
+        QVERIFY(playToolbar->actions().contains(play));
+        // Play must explain the missing project instead of entering selection mode.
+        bool sawMissingProject = false;
+        QTimer::singleShot(0, &window, [&] {
+            auto *message = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+            if (message) {
+                sawMissingProject = message->text().contains("Open a project and map first");
+                message->accept();
+            }
+        });
+        play->trigger();
+        QVERIFY(sawMissingProject);
         QCOMPARE(tabs->tabText(MainTab::Dialogue), QString("Dialogue"));
         QCOMPARE(pages->widget(4), static_cast<QWidget *>(dialogue));
         QVERIFY(!dialogue->isWindow());
