@@ -2315,7 +2315,7 @@ void Editor::deleteSelectedEvents() {
 void Editor::openMapScripts() const {
 #ifdef PORYMAP_Z
     if (!map || !project) return;
-    if (!projectConfig.usePoryScript) {
+    if (!map->getScriptsFilepath().endsWith(".pory", Qt::CaseInsensitive)) {
         openScript(QString());
         return;
     }
@@ -2326,7 +2326,7 @@ void Editor::openMapScripts() const {
 bool Editor::openScript(const QString &scriptLabel) const {
 #ifdef PORYMAP_Z
     if (!map || !project) return false;
-    if (!projectConfig.usePoryScript) {
+    if (!map->getScriptsFilepath().endsWith(".pory", Qt::CaseInsensitive)) {
         QStringList maps;
         for (const auto &name : project->mapNames()) maps.append(Map::getJsonFilepath(name));
         auto sources = project->getAllEventScriptsFilepaths();

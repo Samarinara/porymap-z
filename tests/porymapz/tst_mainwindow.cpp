@@ -8,6 +8,7 @@
 #include <QTabWidget>
 #include <QListWidget>
 #include <QToolBar>
+#include <QToolButton>
 #include <QTimer>
 #include <QMessageBox>
 #include <QCheckBox>
@@ -31,6 +32,62 @@
 class MainWindowTest : public QObject {
     Q_OBJECT
 private slots:
+    void scriptToolbarOpensPopup_data() {
+        QTest::addColumn<bool>("poryscriptEnabled");
+        QTest::newRow("assembly-project") << false;
+        QTest::newRow("assembly-map-with-poryscript-enabled") << true;
+    }
+    void scriptToolbarOpensPopup() {
+        QFETCH(bool, poryscriptEnabled);
+        QTemporaryDir root;
+        MainWindow window(nullptr);
+        window.initialize();
+        Project project;
+        project.setRoot(root.path());
+        Map map;
+        map.setName("Test");
+        const auto oldRoot = projectConfig.root();
+        const bool oldPoryscript = projectConfig.usePoryScript;
+        projectConfig.setRoot(root.path());
+        projectConfig.usePoryScript = poryscriptEnabled;
+        window.editor->project = &project;
+        window.editor->map = &map;
+        const auto reset = qScopeGuard([&] {
+            window.editor->map = nullptr;
+            window.editor->project = nullptr;
+            projectConfig.setRoot(oldRoot);
+            projectConfig.usePoryScript = oldPoryscript;
+        });
+        const auto sourcePath = map.getScriptsFilepath();
+        QVERIFY(sourcePath.endsWith(".inc"));
+        QVERIFY(QDir().mkpath(QFileInfo(sourcePath).absolutePath()));
+        QFile source(sourcePath);
+        QVERIFY(source.open(QIODevice::WriteOnly));
+        source.write("Test_Event::\n\tend\n");
+        source.close();
+        auto *button = window.findChild<QToolButton *>("toolButton_Open_Scripts");
+        QVERIFY(button);
+        // This minimal fixture bypasses project loading, which normally enables the Events page.
+        for (QWidget *widget = button; widget; widget = widget->parentWidget()) widget->setEnabled(true);
+        // Check both user entry points: the toolbar and an event label.
+        for (bool event : {false, true}) {
+            bool popupOpened = false;
+            QTimer::singleShot(0, &window, [&] {
+                auto *popup = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                if (!popup) return;
+                const auto dismiss = qScopeGuard([&] { popup->reject(); });
+                QCOMPARE(popup->objectName(), QString("mapScriptEditor"));
+                auto *text = popup->findChild<QPlainTextEdit *>("scriptSource");
+                QVERIFY(text);
+                QVERIFY(text->toPlainText().contains("Test_Event::"));
+                popupOpened = true;
+            });
+            if (event) QVERIFY(window.editor->openScript("Test_Event"));
+            else button->click();
+            QApplication::processEvents();
+            QVERIFY(popupOpened);
+        }
+    }
     void playtestStoryControlsPersist() {
         if (QStandardPaths::findExecutable("python3").isEmpty() || QStandardPaths::findExecutable("make").isEmpty())
             QSKIP("Requires Python 3 and make for dialog validation.");

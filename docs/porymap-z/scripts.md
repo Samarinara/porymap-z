@@ -1,6 +1,6 @@
 # Map script popup
 
-In Porymap-Z, open a map and choose **Open Map Scripts** in the Events toolbar, or click an event's script button to jump to its definition. Assembly projects, including pokeemerald-expansion, open the script popup. Projects configured for Poryscript retain the external editor.
+In Porymap-Z, open a map and choose **Open Map Scripts** in the Events toolbar, or click an event's script button to jump to its definition. Assembly projects, including pokeemerald-expansion, open the script popup. Maps whose source is a `.pory` file retain the external editor. Assembly maps open the popup even when Poryscript is enabled in project settings.
 
 The map selector uses the project's configured map directories and each map's `map.json`. Object, coordinate, and background events appear as separate entry points. Map scripts include the local script labels or the `shared_scripts_map` owner's labels. The popup follows label references through shared source files into a **Referenced scripts and text** group. Missing definitions remain visible. **All project scripts** lists indexed definitions by source file, including scripts that no map directly references. Search filters labels, groups, and paths.
 
