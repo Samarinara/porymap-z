@@ -28,38 +28,15 @@ There are no Porymap-Z binary releases yet. The [original Porymap releases](http
 
 ## Tests
 
-```sh
-mkdir -p build/dialogue-tests
-cd build/dialogue-tests
-qmake ../../tests/porymapz/dialogue.pro
-make -j2
-./tst_dialogue
-cd ..
-mkdir -p dialogue-ui-tests
-cd dialogue-ui-tests
-qmake ../../tests/porymapz/editor.pro
-make -j2
-QT_QPA_PLATFORM=offscreen ./tst_dialogueeditor
-cd ..
-mkdir -p battle-tests
-cd battle-tests
-qmake ../../tests/porymapz/battle.pro
-make -j2
-QT_QPA_PLATFORM=offscreen ./tst_battle
-```
-
-To test the main-window tab integration as well, run from the repository root:
+Build and run every Porymap-Z test suite, the same way CI does, from the repository root:
 
 ```sh
-cd build/app
-qmake CONFIG+=porymap_z_tests ../../porymap-z.pro
-make -j4
-QT_QPA_PLATFORM=offscreen ./tst_mainwindow
-qmake ../../porymap-z.pro
-make -j4
+tests/porymapz/run_tests.sh build/tests
 ```
 
-For an optional round-trip test against a real pokeemerald checkout, run `PORYMAP_Z_TEST_PROJECT=/path/to/pokeemerald ./tst_dialogue` from the dialogue test build directory. This test edits temporary copies and leaves that checkout untouched.
+Set `QMAKE` to pick a Qt version and `JOBS` for the make job count. Any further arguments are passed to qmake. The script builds each suite in its own folder under `build/tests`, including the app and the main window test, and then runs the playtest helper's Python tests. It needs Python 3.
+
+Checks against real decomp checkouts run only when their variables are set. The script lists them all. CI fetches pokeemerald, pokefirered and pokeemerald-expansion at pinned revisions and runs these checks on every build. `PORYMAP_Z_TRAINER_PROJECT` creates and repairs a trainer in the checkout, so point it at a disposable pokeemerald copy. The other checks leave their checkouts untouched.
 
 ## Upstream and licensing
 

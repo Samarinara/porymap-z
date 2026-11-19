@@ -62,7 +62,7 @@ void ScriptDocument::scan(const QString &root, const QStringList &sources, const
             const int end = i + 1 < definitions.size() ? definitions[i + 1].capturedStart() : bytes.size();
             const int index = m_blocks.size();
             m_blocks.append({match.captured(1), path, start, end - start,
-                bytes.left(start).count('\n') + 1, references(code.mid(match.capturedEnd(), end - match.capturedEnd()))});
+                int(bytes.left(start).count('\n')) + 1, references(code.mid(match.capturedEnd(), end - match.capturedEnd()))});
             m_labels[match.captured(1)].append(index);
             folderLabels[info.absolutePath()].append(match.captured(1));
         }

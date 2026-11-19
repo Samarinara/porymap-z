@@ -17,9 +17,17 @@ on:
 jobs:
   build-linux:
     strategy:
+     # Report every Qt version instead of cancelling the rest after one failure.
+     fail-fast: false
      matrix:
        qtversion: [5.14.2, 6.8.*]
     runs-on: ubuntu-latest
+    env:
+      # Real-project checks run against these upstream revisions. Bump them
+      # deliberately so a decomp format change shows up as its own commit.
+      POKEEMERALD_REF: 9103e529c2fbdd7add4a1ff3350c6c1f92112c42
+      POKEFIRERED_REF: ce6406d8c2eaf46d543c8a2606de0c3cb1951982
+      EXPANSION_REF: fc4cb0b2a8abfc407f756306149cff7084a3afa0
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v4
@@ -31,35 +39,37 @@ jobs:
           modules: 'qtcharts'
           cache: 'true'
 
-      - name: Configure
-        run: qmake porymap-z.pro
-
-      - name: Compile
-        run: make -j8
-
-      - name: Test dialogue and battle editing
+      - name: Fetch decomp projects
         run: |
-          mkdir -p build/dialogue-tests
-          cd build/dialogue-tests
-          qmake ../../tests/porymapz/dialogue.pro
-          make -j2
-          ./tst_dialogue
-          cd ..
-          mkdir -p dialogue-ui-tests
-          cd dialogue-ui-tests
-          qmake ../../tests/porymapz/editor.pro
-          make -j2
-          QT_QPA_PLATFORM=offscreen ./tst_dialogueeditor
-          cd ..
-          mkdir -p battle-tests
-          cd battle-tests
-          qmake ../../tests/porymapz/battle.pro
-          make -j2
-          QT_QPA_PLATFORM=offscreen ./tst_battle
-          cd ../..
-          qmake CONFIG+=porymap_z_tests porymap-z.pro
-          make -j8
-          QT_QPA_PLATFORM=offscreen ./tst_mainwindow
+          decomps="$RUNNER_TEMP/decomps"
+          fetch() {
+            git init -q "$decomps/$1"
+            git -C "$decomps/$1" fetch -q --depth 1 "https://github.com/$2" "$3"
+            git -C "$decomps/$1" checkout -q FETCH_HEAD
+          }
+          fetch pokeemerald pret/pokeemerald "$POKEEMERALD_REF"
+          fetch pokefirered pret/pokefirered "$POKEFIRERED_REF"
+          fetch pokeemerald-expansion rh-hideout/pokeemerald-expansion "$EXPANSION_REF"
+          make -C "$decomps/pokeemerald-expansion/tools/trainerproc"
+          mkdir "$decomps/corpus"
+          ln -s ../pokeemerald "$decomps/corpus/emerald"
+          ln -s ../pokefirered "$decomps/corpus/firered"
+          # Tests that write files get their own copies.
+          cp -r "$decomps/pokeemerald" "$decomps/pokeemerald-trainers"
+          cp "$decomps/pokeemerald-expansion/src/data/trainers.party" "$decomps/trainers.party"
+          {
+            echo "PORYMAP_Z_TEST_PROJECT=$decomps/pokeemerald"
+            echo "PORYMAP_SCRIPT_TEST_PROJECT=$decomps/pokeemerald-expansion"
+            echo "PORYMAP_Z_TRAINER_PROJECT=$decomps/pokeemerald-trainers"
+            echo "PORYMAP_Z_BATTLE_CORPUS=$decomps/corpus"
+            echo "PORYMAP_Z_EXPANSION_PROJECT=$decomps/pokeemerald-expansion"
+            echo "PORYMAP_Z_EXPANSION_CORPUS=$decomps/trainers.party"
+            echo "PORYMAP_Z_TRAINERPROC=$decomps/pokeemerald-expansion/tools/trainerproc/trainerproc"
+          } >> "$GITHUB_ENV"
+
+      # Builds the app and every test suite, then runs them all.
+      - name: Build and test
+        run: tests/porymapz/run_tests.sh build/ci
 
   build-macos:
     strategy:

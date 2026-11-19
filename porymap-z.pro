@@ -3,6 +3,10 @@ include(porymap.pro)
 TARGET = porymap-z
 QMAKE_TARGET_BUNDLE_PREFIX = com.samarinara
 DEFINES += PORYMAP_Z
+
+# Qt 6.10's qyieldcpu.h calls the __yield builtin without declaring it, which
+# current Apple clang rejects on arm64. The builtin itself compiles correctly.
+macx: QMAKE_CXXFLAGS += -Wno-error=implicit-function-declaration
 SOURCES += src/porymapz/battledocument.cpp \
            src/porymapz/battleeditor.cpp \
            src/porymapz/dialoguedocument.cpp \

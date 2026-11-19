@@ -101,9 +101,9 @@ private slots:
         window.initialize();
         Project project;
         project.setRoot(root.path());
-        project.speciesNames = {"SPECIES_TREECKO"};
-        project.flagNames = {"FLAG_RECEIVED_STARTER", "FLAG_HIDE_STARTER"};
-        project.varNames = {"VAR_STARTER_STORY"};
+        project.speciesNames = QStringList{"SPECIES_TREECKO"};
+        project.flagNames = QStringList{"FLAG_RECEIVED_STARTER", "FLAG_HIDE_STARTER"};
+        project.varNames = QStringList{"VAR_STARTER_STORY"};
         Map map;
         map.setConstantName("MAP_TEST");
         window.editor->project = &project;
@@ -169,7 +169,7 @@ private slots:
         window.initialize();
         Project project;
         project.setRoot(root.path());
-        project.speciesNames = {"SPECIES_TREECKO"};
+        project.speciesNames = QStringList{"SPECIES_TREECKO"};
         Map map;
         window.editor->project = &project;
         window.editor->map = &map;
@@ -445,6 +445,14 @@ private slots:
         connect(&watchdog, &QTimer::timeout, &window, [] {
             auto *modal = QApplication::activeModalWidget();
             if (auto *box = qobject_cast<QMessageBox *>(modal)) { qWarning() << "Dismissing:" << box->text(); box->accept(); }
+            // A fresh checkout without porymap.project.cfg, in a folder whose name doesn't
+            // say which game it is, asks for the game in a non-modal dialog.
+            for (auto *widget : QApplication::topLevelWidgets()) {
+                auto *dialog = qobject_cast<QDialog *>(widget);
+                if (!dialog || !dialog->isVisible() || dialog->windowTitle() != "Project Configuration") continue;
+                if (auto *game = dialog->findChild<QComboBox *>()) game->setCurrentText("pokeemerald");
+                dialog->accept();
+            }
         });
         watchdog.start(500);
         QVERIFY(window.openProject(root, true));

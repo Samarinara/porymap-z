@@ -253,7 +253,8 @@ bool TrainerProject::ensureFile(const QString &file, QString *error) {
 int TrainerProject::lineOf(const QString &file, int offset) const {
     const auto it = m_files.constFind(file);
     if (it == m_files.cend()) return 0;
-    return QStringView(it->text).left(offset).count('\n') + 1;
+    const int end = qBound(0, offset, int(it->text.size()));
+    return int(std::count(it->text.cbegin(), it->text.cbegin() + end, QChar('\n'))) + 1;
 }
 
 void TrainerProject::readConstants() {
@@ -1038,17 +1039,21 @@ const TrainerProject::ScriptIndex &TrainerProject::scripts() {
         const bool pory = info.suffix() == "pory";
         QString label;
         int lineNumber = 0;
-        for (const auto &rawView : QStringView(content).split('\n')) {
+        for (int lineStart = 0; lineStart <= content.size();) {
+            int lineEnd = content.indexOf('\n', lineStart);
+            if (lineEnd < 0) lineEnd = content.size();
+            const QStringView rawView = QStringView(content).mid(lineStart, lineEnd - lineStart);
+            lineStart = lineEnd + 1;
             ++lineNumber;
             const QStringView trimmed = rawView.trimmed();
             if (trimmed.isEmpty()) continue;
             const QChar first = trimmed.front();
             if (pory) {
-                const auto match = poryLabel.matchView(rawView);
+                const auto match = poryLabel.match(rawView.toString());
                 if (match.hasMatch()) { label = match.captured(1); m_scripts.labels.insert(label); continue; }
             } else if ((first.isLetter() || first == '_')) {
                 const int colon = trimmed.indexOf(':');
-                if (colon > 0 && identifier.matchView(trimmed.left(colon)).hasMatch()) {
+                if (colon > 0 && identifier.match(trimmed.left(colon).toString()).hasMatch()) {
                     label = trimmed.left(colon).toString();
                     m_scripts.labels.insert(label);
                     continue;

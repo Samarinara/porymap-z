@@ -39,6 +39,34 @@
 #include <QVBoxLayout>
 #include <cmath>
 
+// QProcess::splitCommand needs Qt 5.15, and the minimum supported version is Qt 5.14.
+// Follows the same rules: double quotes group words, and """ is a literal quote.
+static QStringList splitCommandLine(const QString &command) {
+    QStringList arguments;
+    QString current;
+    int quotes = 0;
+    bool quoted = false;
+    for (const QChar c : command) {
+        if (c == '"') {
+            if (++quotes == 3) {
+                quotes = 0;
+                current += c;
+            }
+            continue;
+        }
+        if (quotes == 1) quoted = !quoted;
+        quotes = 0;
+        if (!quoted && c.isSpace()) {
+            if (!current.isEmpty()) arguments.append(current);
+            current.clear();
+        } else {
+            current += c;
+        }
+    }
+    if (!current.isEmpty()) arguments.append(current);
+    return arguments;
+}
+
 Playtest::Playtest(QMainWindow *window, Editor *editor, MapView *view, std::function<bool()> save)
     : QObject(window), m_window(window), m_editor(editor), m_view(view), m_save(std::move(save)),
       m_action(new QAction(window->style()->standardIcon(QStyle::SP_MediaPlay), tr("Play"), this)),
@@ -299,7 +327,7 @@ void Playtest::configure() {
         m_config.insert("flags", startingFlags);
         m_config.insert("variables", startingVariables);
         QJsonArray args;
-        for (const auto &arg : QProcess::splitCommand(makeArgs->text())) args.append(arg);
+        for (const auto &arg : splitCommandLine(makeArgs->text())) args.append(arg);
         m_config.insert("make_args", args);
         m_config.insert("build_target", buildTarget->currentData().toString());
         m_config.insert("scope", wholeGame->isChecked() ? QString("full") : scope->currentData().toString());

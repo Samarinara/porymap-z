@@ -22,3 +22,4 @@ qrc_*.cpp
 /porymap-z
 porymap-z.app*
 porymap-z.pro.user
+__pycache__/
