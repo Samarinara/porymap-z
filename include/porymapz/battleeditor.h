@@ -21,6 +21,8 @@ public:
     bool saveChanges();
     bool hasUnsavedChanges() const;
     void refreshScene();
+    void reloadFromDisk();
+    bool showTrainer(const QString &id);
 protected:
     bool event(QEvent *event) override;
 signals:

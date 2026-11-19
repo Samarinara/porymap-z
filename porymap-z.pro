@@ -23,3 +23,5 @@ contains(CONFIG, porymap_z_tests) {
 
 SOURCES += src/porymapz/scriptdocument.cpp src/porymapz/scripteditor.cpp
 HEADERS += include/porymapz/scriptdocument.h include/porymapz/scripteditor.h
+SOURCES += src/porymapz/trainerproject.cpp src/porymapz/trainermanager.cpp
+HEADERS += include/porymapz/trainerproject.h include/porymapz/trainermanager.h

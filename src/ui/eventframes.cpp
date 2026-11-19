@@ -335,14 +335,76 @@ void ObjectFrame::setup() {
     l_form_radius_treeid->addRow("Sight Radius / Berry Tree ID", this->combo_radius_treeid);
     this->layout_contents->addLayout(l_form_radius_treeid);
 
+#ifdef PORYMAP_Z
+    // trainer tools
+    QFormLayout *l_form_trainer_tools = new QFormLayout();
+    this->label_trainer_status = new QLabel(this);
+    this->label_trainer_status->setObjectName("label_trainer_status");
+    this->label_trainer_status->setWordWrap(true);
+    this->label_trainer_status->setTextFormat(Qt::PlainText);
+    l_form_trainer_tools->addRow("Trainer", this->label_trainer_status);
+    this->button_new_trainer = new QPushButton("Make Trainer...", this);
+    this->button_new_trainer->setObjectName("button_new_trainer");
+    this->button_new_trainer->setToolTip(Util::toHtmlParagraph("Create a new trainer and connect this object to it."));
+    this->button_edit_trainer = new QPushButton("Edit Party", this);
+    this->button_edit_trainer->setObjectName("button_edit_trainer");
+    this->button_edit_trainer->setToolTip(Util::toHtmlParagraph("Open this trainer's data in the Battle tab."));
+    this->button_check_trainers = new QPushButton("Check Files...", this);
+    this->button_check_trainers->setObjectName("button_check_trainers");
+    this->button_check_trainers->setToolTip(Util::toHtmlParagraph("Find and repair problems across the project's trainer files."));
+    QHBoxLayout *l_hbox_trainer = new QHBoxLayout();
+    l_hbox_trainer->setSpacing(3);
+    l_hbox_trainer->addWidget(this->button_new_trainer);
+    l_hbox_trainer->addWidget(this->button_edit_trainer);
+    l_hbox_trainer->addWidget(this->button_check_trainers);
+    l_form_trainer_tools->addRow("", l_hbox_trainer);
+    this->layout_contents->addLayout(l_form_trainer_tools);
+#endif
+
     // custom attributes
     EventFrame::initCustomAttributesTable();
 }
+
+#ifdef PORYMAP_Z
+void ObjectFrame::updateTrainerStatus() {
+    if (!this->trainerWindow) return;
+    const auto link = this->trainerWindow->trainerLink(this->object->getScript());
+    this->linkedTrainer = link.trainers.value(0);
+    this->button_edit_trainer->setEnabled(!this->linkedTrainer.isEmpty());
+    this->button_new_trainer->setText(this->linkedTrainer.isEmpty() ? "Make Trainer..." : "Replace Trainer...");
+
+    const QString type = this->object->getTrainerType();
+    const bool spots = !type.isEmpty() && type != "0" && type != "TRAINER_TYPE_NONE";
+    bool numeric = false;
+    const int sight = this->object->getSightRadiusBerryTreeID().toInt(&numeric);
+
+    QStringList status;
+    if (!link.trainers.isEmpty()) status << QString("Battles %1.").arg(link.trainers.join(", "));
+    else if (spots) status << "Marked as a trainer, but its script doesn't start a battle.";
+    else status << "Not a trainer.";
+    if (spots && numeric && sight == 0) status << "Sight radius is 0, so it will never spot the player.";
+    if (link.problems.size() == 1) status << link.problems.first() + ".";
+    else if (link.problems.size() > 1) status << QString("%1 problems found. Use Check Files to review them.").arg(link.problems.size());
+    this->label_trainer_status->setText(status.join(' '));
+}
+#endif
 
 void ObjectFrame::connectSignals(MainWindow *window) {
     if (this->connected) return;
 
     EventFrame::connectSignals(window);
+
+#ifdef PORYMAP_Z
+    this->trainerWindow = window;
+    this->button_new_trainer->disconnect();
+    connect(this->button_new_trainer, &QPushButton::clicked, [this, window]() { window->showNewTrainerDialog(this->object); });
+    this->button_edit_trainer->disconnect();
+    connect(this->button_edit_trainer, &QPushButton::clicked, [this, window]() {
+        if (!this->linkedTrainer.isEmpty()) window->openTrainerInBattleTab(this->linkedTrainer);
+    });
+    this->button_check_trainers->disconnect();
+    connect(this->button_check_trainers, &QPushButton::clicked, [window]() { window->showTrainerRepairDialog(); });
+#endif
 
     // local id
     this->line_edit_local_id->disconnect();
@@ -386,6 +448,9 @@ void ObjectFrame::connectSignals(MainWindow *window) {
     connect(this->combo_script, &QComboBox::currentTextChanged, [this](const QString &text) {
         this->object->setScript(text);
         this->object->modify();
+#ifdef PORYMAP_Z
+        this->updateTrainerStatus();
+#endif
     });
 
     this->button_script->disconnect();
@@ -406,6 +471,9 @@ void ObjectFrame::connectSignals(MainWindow *window) {
     connect(this->combo_trainer_type, &QComboBox::currentTextChanged, [this](const QString &text) {
         this->object->setTrainerType(text);
         this->object->modify();
+#ifdef PORYMAP_Z
+        this->updateTrainerStatus();
+#endif
     });
 
     // sight berry
@@ -413,6 +481,9 @@ void ObjectFrame::connectSignals(MainWindow *window) {
     connect(this->combo_radius_treeid, &QComboBox::currentTextChanged, [this](const QString &text) {
         this->object->setSightRadiusBerryTreeID(text);
         this->object->modify();
+#ifdef PORYMAP_Z
+        this->updateTrainerStatus();
+#endif
     });
 }
 

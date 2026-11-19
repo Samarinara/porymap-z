@@ -93,9 +93,20 @@ public:
     NoScrollComboBox *combo_trainer_type;
     NoScrollComboBox *combo_radius_treeid;
     QCheckBox *check_in_connection;
+#ifdef PORYMAP_Z
+    QLabel *label_trainer_status;
+    QPushButton *button_new_trainer;
+    QPushButton *button_edit_trainer;
+    QPushButton *button_check_trainers;
+    void updateTrainerStatus();
+#endif
 
 private:
     ObjectEvent *object;
+#ifdef PORYMAP_Z
+    QPointer<MainWindow> trainerWindow;
+    QString linkedTrainer;
+#endif
 };
 
 

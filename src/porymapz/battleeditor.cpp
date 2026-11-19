@@ -357,6 +357,34 @@ QString BattleEditor::resolveDataPath(int kind) const {
 void BattleEditor::refreshScene() {
     refreshSceneIndex(); filterRecords();
 }
+void BattleEditor::reloadFromDisk() {
+    if (m_fileIndex >= 0) loadFile(m_fileIndex);
+    m_scripts->reloadFromDisk();
+}
+bool BattleEditor::showTrainer(const QString &id) {
+    if (!confirmChanges()) return false;
+    m_views->setCurrentIndex(0);
+    m_search->clear();
+    m_scope->setCurrentIndex(1);
+    for (int file = 0; file < m_files->count(); ++file) {
+        const QString path = m_root + '/' + m_files->itemData(file).toString();
+        BattleDocument document;
+        DialogueDocument source; QString error;
+        if (!editable(path) || !source.load(path, &error)) continue;
+        document.parse(source.sourceText());
+        for (int record : document.records()) {
+            if (!document.isTrainer(record) || trainerId(document.nodes().at(record).name) != id) continue;
+            m_files->setCurrentIndex(file);
+            if (m_fileIndex != file) loadFile(file);
+            const int row = m_document.records().indexOf(record);
+            if (row < 0) return false;
+            m_records->setCurrentRow(row);
+            showRecord(row);
+            return true;
+        }
+    }
+    return false;
+}
 void BattleEditor::refreshSceneIndex() {
     m_sceneTrainers.clear(); m_sceneParties.clear(); m_sceneIndexed = false;
     if (m_root.isEmpty() || m_mapName.isEmpty() || m_scriptsPath.isEmpty()) return;

@@ -19,7 +19,7 @@ signals:
 
 private:
     QMap<Event::Type,QAction*> typeToAction;
-    Event::Type selectedEventType;
+    Event::Type selectedEventType = Event::Type::Object;
     QMenu* menu;
 
     void addEventType(Event::Type type);

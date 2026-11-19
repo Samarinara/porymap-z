@@ -16,6 +16,8 @@ Maps without static trainer references show an empty list with an explanation. U
 
 Saves use atomic replacement, preserve UTF-8/BOM and LF/CRLF conventions, and refuse to overwrite externally modified files. If Dialogue and Battle Scripts open the same script, reload the other view after saving; stale edits are refused on save.
 
+To add trainers from the map or repair damaged trainer files, use the [trainer tools](trainers.md) on the Events tab.
+
 ## Data files
 
 Stock projects start with `src/data/trainers.h`, `src/data/trainer_parties.h`, and `include/constants/trainers.h`. If a trainer data file is missing, the editor looks for a unique matching C declaration in trainer-related files under `src/data`. **Locate File…** selects a relocated source file inside the project for this session. Missing-file errors include the resolved path and recovery instructions. Symlinks and files outside the project cannot be saved.

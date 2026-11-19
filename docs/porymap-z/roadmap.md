@@ -6,9 +6,9 @@ Porymap-Z expands the existing Qt editor while retaining the game project's runt
 
 Edit the active map from a Dialogue main tab: dialogue by label or the complete scene script source, including shared scripts. Browse other project dialogue with an explicit scope switch. Save with the main Save action, preserve surrounding source, and refuse saves when external edits are detected. Source preservation and save failures have automated regression coverage.
 
-## Milestone 2: trainers and battles (implemented; validation and event linking remain)
+## Milestone 2: trainers and battles (implemented)
 
-The Battle main tab edits pokeemerald trainer definitions and parties, including species, level, IVs, held items, moves, trainer class, AI flags, and battle type. It provides party navigation, project-constant completion, adding Pokémon, duplication/deletion, trainer ID source access, and scene scripts. Source spans preserve unrelated expressions and comments, and saves detect external modifications. See the [battle guide](battles.md). Direct navigation from map events and semantic/reference validation remain future work.
+The Battle main tab edits pokeemerald trainer definitions and parties, including species, level, IVs, held items, moves, trainer class, AI flags, and battle type. It provides party navigation, project-constant completion, adding Pokémon, duplication/deletion, trainer ID source access, and scene scripts. Source spans preserve unrelated expressions and comments, and saves detect external modifications. See the [battle guide](battles.md). The [trainer tools](trainers.md) add trainer creation, navigation from map events, and cross-file validation and repair from the Events tab.
 
 ## Milestone 3: connected game editing (planned)
 

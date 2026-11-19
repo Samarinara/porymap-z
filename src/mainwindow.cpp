@@ -3,6 +3,7 @@
 #ifdef PORYMAP_Z
 #include "porymapz/dialogueeditor.h"
 #include "porymapz/battleeditor.h"
+#include "porymapz/trainermanager.h"
 #endif
 #include "ui_mainwindow.h"
 #include "project.h"
@@ -376,6 +377,21 @@ void MainWindow::initCustomUI() {
         }
         editor->project->readEventScriptLabels();
     });
+    // Trainer actions live beside the other "new event" choices on the Events tab.
+    auto *trainerMenu = ui->newEventToolButton->QToolButton::menu();
+    trainerMenu->addSeparator();
+    auto *newTrainer = trainerMenu->addAction(QIcon(QStringLiteral(":/icons/add.ico")), tr("New Trainer..."));
+    newTrainer->setObjectName("action_NewTrainer");
+    auto *checkTrainers = trainerMenu->addAction(tr("Check Trainer Files..."));
+    checkTrainers->setObjectName("action_CheckTrainerFiles");
+    const auto restoreDefault = [this] {
+        // QToolButton adopts whichever menu action ran last as its main action.
+        QTimer::singleShot(0, this, [this] { ui->newEventToolButton->selectEventType(ui->newEventToolButton->getSelectedEventType()); });
+    };
+    connect(newTrainer, &QAction::triggered, this, [this, restoreDefault] { restoreDefault(); showNewTrainerDialog(); });
+    connect(checkTrainers, &QAction::triggered, this, [this, restoreDefault] { restoreDefault(); showTrainerRepairDialog(); });
+    connect(dialogueEditor, &PorymapZ::DialogueEditor::sourceSaved, this, [this] { trainerIndex.reset(); });
+    connect(battleEditor, &PorymapZ::BattleEditor::sourceSaved, this, [this] { trainerIndex.reset(); });
 #endif
     this->unlockableMainTabIcon.load(":/images/unlockable_tab_icon.dat");
 
@@ -2524,6 +2540,123 @@ void MainWindow::resetMapViewScale() {
     editor->scaleMapView(0);
 }
 
+#ifdef PORYMAP_Z
+PorymapZ::TrainerProject *MainWindow::loadedTrainerIndex() {
+    if (!editor || !editor->project) return nullptr;
+    if (!trainerIndex) {
+        auto project = std::make_shared<PorymapZ::TrainerProject>();
+        QString error;
+        if (!project->load(editor->project->root, projectConfig.baseGameVersion == BaseGameVersion::pokefirered, &error)) {
+            logWarn(QString("Failed to read trainer files: %1").arg(error));
+            return nullptr;
+        }
+        trainerProblems.clear();
+        for (const auto &issue : project->analyze())
+            if (!issue.trainer.isEmpty()) trainerProblems[issue.trainer].append(issue.summary);
+        trainerIndex = project;
+    }
+    return trainerIndex.get();
+}
+
+MainWindow::TrainerLink MainWindow::trainerLink(const QString &script) {
+    TrainerLink link;
+    auto *project = script.isEmpty() || script == "NULL" || script == "0x0" ? nullptr : loadedTrainerIndex();
+    if (!project) return link;
+    link.trainers = project->trainersForScript(script);
+    for (const auto &trainer : link.trainers) link.problems += trainerProblems.value(trainer);
+    return link;
+}
+
+// Trainer tools write to the same files as the Battle and Dialogue tabs.
+bool MainWindow::prepareTrainerFiles(PorymapZ::TrainerProject &project) {
+    if (!editor || !editor->project) return false;
+    if (!dialogueEditor->confirmChanges() || !battleEditor->confirmChanges()) return false;
+    QString error;
+    if (!project.load(editor->project->root, projectConfig.baseGameVersion == BaseGameVersion::pokefirered, &error)) {
+        QMessageBox::warning(this, tr("Cannot Read Trainer Files"), error);
+        return false;
+    }
+    return true;
+}
+
+void MainWindow::trainerFilesChanged() {
+    trainerIndex.reset();
+    dialogueEditor->reloadFromDisk();
+    battleEditor->reloadFromDisk();
+    if (!editor || !editor->project) return;
+    for (const auto &name : editor->project->mapNames()) {
+        auto *map = editor->project->getMap(name);
+        if (map) map->invalidateScripts();
+    }
+    editor->project->readEventScriptLabels();
+    for (auto *event : editor->selectedEvents) {
+        auto *frame = qobject_cast<ObjectFrame *>(event->getEventFrame());
+        if (frame) frame->updateTrainerStatus();
+    }
+}
+
+void MainWindow::showNewTrainerDialog(ObjectEvent *object) {
+    if (!editor || !editor->project || !editor->map) return;
+    Project *project = editor->project;
+    Map *map = editor->map;
+    PorymapZ::TrainerProject trainers;
+    if (!prepareTrainerFiles(trainers)) return;
+
+    PorymapZ::TrainerEventOptions options;
+    options.sprites = project->gfxDefines.keys();
+    options.trainerTypes = project->trainerTypes;
+    options.sprite = object ? object->getGfx() : QStringLiteral("OBJ_EVENT_GFX_YOUNGSTER");
+    if (!options.sprites.contains(options.sprite)) options.sprite = QStringLiteral("OBJ_EVENT_GFX_BOY_1");
+    options.trainerType = QStringLiteral("TRAINER_TYPE_NORMAL");
+    if (object) {
+        bool numeric = false;
+        const int sight = object->getSightRadiusBerryTreeID().toInt(&numeric);
+        if (numeric && sight > 0) options.sightRadius = sight;
+        const QString script = object->getScript();
+        if (!script.isEmpty() && script != "NULL" && script != "0x0") options.replacedScript = script;
+    }
+    const QString scripts = QDir(project->root).relativeFilePath(map->getScriptsFilepath());
+    PorymapZ::NewTrainerDialog dialog(&trainers, map->name(), scripts, options, this);
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    if (!object) object = dynamic_cast<ObjectEvent *>(editor->addNewEvent(Event::Type::Object));
+    trainerFilesChanged();
+    if (!object) return;
+    object->setGfx(dialog.sprite());
+    object->setTrainerType(dialog.trainerType());
+    object->setSightRadiusBerryTreeID(QString::number(dialog.sightRadius()));
+    object->setScript(dialog.spec().scriptLabel);
+    if (object->getMovement() == project->movementTypes.value(0) && project->movementTypes.contains("MOVEMENT_TYPE_FACE_DOWN"))
+        object->setMovement(QStringLiteral("MOVEMENT_TYPE_FACE_DOWN"));
+    if (auto *item = object->getPixmapItem()) item->render(project);
+    object->modify();
+    // The frame may already be showing this object's previous values.
+    if (auto *frame = qobject_cast<ObjectFrame *>(object->getEventFrame())) {
+        frame->invalidateValues();
+        frame->invalidateUi();
+    }
+    updateSelectedEvents();
+}
+
+void MainWindow::showTrainerRepairDialog() {
+    PorymapZ::TrainerProject trainers;
+    if (!prepareTrainerFiles(trainers)) return;
+    PorymapZ::TrainerRepairDialog dialog(&trainers, this);
+    connect(&dialog, &PorymapZ::TrainerRepairDialog::filesChanged, this, &MainWindow::trainerFilesChanged);
+    QString trainer;
+    connect(&dialog, &PorymapZ::TrainerRepairDialog::openTrainer, this, [&trainer](const QString &id) { trainer = id; });
+    dialog.exec();
+    if (!trainer.isEmpty()) openTrainerInBattleTab(trainer);
+}
+
+void MainWindow::openTrainerInBattleTab(const QString &id) {
+    if (!battleEditor) return;
+    on_mainTabBar_tabBarClicked(MainTab::Battle);
+    if (!battleEditor->showTrainer(id))
+        WarningMessage::show(tr("%1 was not found in the trainer data. Use Check Trainer Files to repair it.").arg(id), this);
+}
+#endif
+
 void MainWindow::tryAddEventTab(QWidget * tab) {
     auto group = getEventGroupFromTabWidget(tab);
     if (this->editor->map && this->editor->map->getNumEvents(group))
@@ -2668,6 +2801,9 @@ void MainWindow::updateSelectedEvents() {
         eventFrame->populate(this->editor->project);
         eventFrame->initialize();
         eventFrame->connectSignals(this);
+#ifdef PORYMAP_Z
+        if (auto *objectFrame = qobject_cast<ObjectFrame *>(eventFrame)) objectFrame->updateTrainerStatus();
+#endif
         frames.append(eventFrame);
     }
 

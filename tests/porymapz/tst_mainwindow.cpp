@@ -19,9 +19,14 @@
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QTableWidget>
+#include <QTreeWidget>
+#include <QTextBlock>
 #include "mainwindow.h"
 #include "porymapz/dialogueeditor.h"
 #include "porymapz/battleeditor.h"
+#include "porymapz/trainermanager.h"
+#include "eventframes.h"
+#include "editor.h"
 #include "project.h"
 #include <QJsonDocument>
 #include <QJsonArray>
@@ -414,6 +419,140 @@ private slots:
         projectConfig.setRoot(oldRoot);
     }
 
+    // Drives the real window. Point this at a disposable copy: the test writes to it.
+    void trainerToolsOnRealProject() {
+        const auto root = qEnvironmentVariable("PORYMAP_Z_TRAINER_PROJECT");
+        if (root.isEmpty()) QSKIP("Set PORYMAP_Z_TRAINER_PROJECT to a disposable pokeemerald copy.");
+        const auto shots = qEnvironmentVariable("PORYMAP_Z_TRAINER_SHOTS");
+        const auto capture = [&](QWidget *widget, const QString &name) {
+            if (!shots.isEmpty()) widget->grab().save(shots + '/' + name + ".png");
+        };
+        PorymapLoadingScreen splash;
+        auto *previousSplash = porysplash;
+        porysplash = &splash;
+        // Other tests would otherwise reopen this project at startup.
+        const auto recentProjects = porymapConfig.getRecentProjects();
+        const auto restore = qScopeGuard([&] {
+            porysplash = previousSplash;
+            porymapConfig.setRecentProjects(recentProjects);
+            porymapConfig.save();
+        });
+        MainWindow window(nullptr);
+        window.initialize();
+        window.resize(1500, 1000);
+        window.show();
+        QTimer watchdog;
+        connect(&watchdog, &QTimer::timeout, &window, [] {
+            auto *modal = QApplication::activeModalWidget();
+            if (auto *box = qobject_cast<QMessageBox *>(modal)) { qWarning() << "Dismissing:" << box->text(); box->accept(); }
+        });
+        watchdog.start(500);
+        QVERIFY(window.openProject(root, true));
+        watchdog.stop();
+        QVERIFY(window.userSetMap("Route102"));
+        window.ui->mainTabBar->setCurrentIndex(MainTab::Events);
+        window.on_mainTabBar_tabBarClicked(MainTab::Events);
+        QApplication::processEvents();
+
+        auto *menu = window.ui->newEventToolButton->QToolButton::menu();
+        QAction *newTrainer = nullptr, *check = nullptr;
+        for (auto *action : menu->actions()) {
+            if (action->objectName() == "action_NewTrainer") newTrainer = action;
+            if (action->objectName() == "action_CheckTrainerFiles") check = action;
+        }
+        QVERIFY(newTrainer);
+        QVERIFY(check);
+
+        // An existing trainer on the map reports its battle.
+        ObjectEvent *calvin = nullptr;
+        for (auto *event : window.editor->map->getEvents(Event::Group::Object)) {
+            auto *object = dynamic_cast<ObjectEvent *>(event);
+            if (object && object->getScript() == "Route102_EventScript_Calvin") calvin = object;
+        }
+        QVERIFY(calvin);
+        window.editor->selectMapEvent(calvin);
+        window.updateSelectedEvents();
+        QApplication::processEvents();
+        auto *frame = qobject_cast<ObjectFrame *>(calvin->getEventFrame());
+        QVERIFY(frame);
+        QVERIFY2(frame->label_trainer_status->text().contains("TRAINER_CALVIN_1"), qPrintable(frame->label_trainer_status->text()));
+        QVERIFY(frame->button_edit_trainer->isEnabled());
+        capture(&window, "events-tab");
+
+        // Create a trainer from the New Event menu.
+        const int before = window.editor->map->getNumEvents(Event::Group::Object);
+        QTimer::singleShot(0, &window, [&] {
+            auto *dialog = qobject_cast<PorymapZ::NewTrainerDialog *>(QApplication::activeModalWidget());
+            QVERIFY(dialog);
+            const auto close = qScopeGuard([dialog] { if (dialog->isVisible()) dialog->reject(); });
+            dialog->findChild<QLineEdit *>("trainerName")->setText("MARLOW");
+            QApplication::processEvents();
+            capture(dialog, "new-trainer");
+            dialog->findChild<QPushButton *>("createTrainer")->click();
+        });
+        newTrainer->trigger();
+        QCOMPARE(window.editor->map->getNumEvents(Event::Group::Object), before + 1);
+        auto *created = dynamic_cast<ObjectEvent *>(window.editor->selectedEvents.value(0));
+        QVERIFY(created);
+        QCOMPARE(created->getScript(), QString("Route102_EventScript_Marlow"));
+        QCOMPARE(created->getTrainerType(), QString("TRAINER_TYPE_NORMAL"));
+        QCOMPARE(created->getSightRadiusBerryTreeID(), QString("3"));
+        QCOMPARE(window.ui->newEventToolButton->defaultAction()->text(), QString("New Object"));
+        const auto read = [&](const QString &file) {
+            QFile in(root + '/' + file);
+            return in.open(QIODevice::ReadOnly) ? QString::fromUtf8(in.readAll()) : QString();
+        };
+        QVERIFY(read("include/constants/opponents.h").contains("TRAINER_MARLOW"));
+        QVERIFY(read("src/data/trainers.h").contains("[TRAINER_MARLOW]"));
+        QVERIFY(read("src/data/trainer_parties.h").contains("sParty_Marlow"));
+        QVERIFY(read("data/maps/Route102/scripts.inc").contains("Route102_EventScript_Marlow::"));
+        QApplication::processEvents();
+        auto *createdFrame = qobject_cast<ObjectFrame *>(created->getEventFrame());
+        QVERIFY2(createdFrame->label_trainer_status->text().contains("TRAINER_MARLOW"), qPrintable(createdFrame->label_trainer_status->text()));
+        QCOMPARE(createdFrame->combo_script->currentText(), QString("Route102_EventScript_Marlow"));
+        QCOMPARE(createdFrame->combo_trainer_type->currentText(), QString("TRAINER_TYPE_NORMAL"));
+        QCOMPARE(createdFrame->combo_radius_treeid->currentText(), QString("3"));
+        QCOMPARE(createdFrame->combo_sprite->currentText(), created->getGfx());
+        QCOMPARE(created->getScript(), QString("Route102_EventScript_Marlow"));
+        capture(&window, "trainer-created");
+
+        // Damage a file, then repair it from the same menu.
+        QFile table(root + "/src/data/trainers.h");
+        QVERIFY(table.open(QIODevice::ReadOnly));
+        QByteArray damaged = table.readAll();
+        table.close();
+        const QByteArray intact = ".trainerPic = TRAINER_PIC_HIKER,\n        .trainerName = _(\"SAWYER\")";
+        const int damageAt = damaged.indexOf(intact);
+        QVERIFY(damageAt >= 0);
+        damaged.remove(damageAt + intact.indexOf(','), 1);
+        QVERIFY(table.open(QIODevice::WriteOnly));
+        table.write(damaged);
+        table.close();
+        QTimer::singleShot(0, &window, [&] {
+            auto *dialog = qobject_cast<PorymapZ::TrainerRepairDialog *>(QApplication::activeModalWidget());
+            QVERIFY(dialog);
+            const auto close = qScopeGuard([dialog] { if (dialog->isVisible()) dialog->reject(); });
+            QCOMPARE(dialog->findChild<QTreeWidget *>("trainerIssues")->topLevelItemCount(), 1);
+            QApplication::processEvents();
+            capture(dialog, "repair");
+            dialog->findChild<QPushButton *>("selectAllRepairs")->click();
+            dialog->findChild<QPushButton *>("applyTrainerRepairs")->click();
+            QCOMPARE(dialog->findChild<QTreeWidget *>("trainerIssues")->topLevelItemCount(), 0);
+        });
+        check->trigger();
+        QVERIFY(read("src/data/trainers.h").contains(".trainerPic = TRAINER_PIC_HIKER,\n        .trainerName = _(\"SAWYER\")"));
+
+        // Parties stay in the Battle tab.
+        window.openTrainerInBattleTab("TRAINER_MARLOW");
+        QCOMPARE(window.ui->mainTabBar->currentIndex(), int(MainTab::Battle));
+        QCOMPARE(window.ui->mainStackedWidget->currentWidget(), window.findChild<QWidget *>("battleEditor"));
+        auto *source = window.findChild<QPlainTextEdit *>("battleSource");
+        QVERIFY(source);
+        QVERIFY(source->toPlainText().contains("[TRAINER_MARLOW]"));
+        QVERIFY(source->textCursor().block().text().contains("TRAINER_MARLOW"));
+        QApplication::processEvents();
+        capture(&window, "battle-tab");
+    }
 
 };
 QTEST_MAIN(MainWindowTest)

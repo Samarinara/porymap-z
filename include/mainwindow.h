@@ -43,7 +43,7 @@
 
 
 #ifdef PORYMAP_Z
-namespace PorymapZ { class DialogueEditor; class BattleEditor; }
+namespace PorymapZ { class DialogueEditor; class BattleEditor; class TrainerProject; }
 #endif
 
 namespace Ui {
@@ -314,6 +314,18 @@ public:
     Ui::MainWindow *ui;
     QPointer<Editor> editor = nullptr;
 
+#ifdef PORYMAP_Z
+    friend class MainWindowTest;
+    struct TrainerLink {
+        QStringList trainers;
+        QStringList problems;
+    };
+    TrainerLink trainerLink(const QString &script);
+    void showNewTrainerDialog(ObjectEvent *object = nullptr);
+    void showTrainerRepairDialog();
+    void openTrainerInBattleTab(const QString &id);
+#endif
+
 signals:
     void mapOpened(Map*);
     void layoutOpened(Layout*);
@@ -363,6 +375,11 @@ private:
 #ifdef PORYMAP_Z
     PorymapZ::DialogueEditor *dialogueEditor = nullptr;
     PorymapZ::BattleEditor *battleEditor = nullptr;
+    std::shared_ptr<PorymapZ::TrainerProject> trainerIndex;
+    QHash<QString, QStringList> trainerProblems;
+    PorymapZ::TrainerProject *loadedTrainerIndex();
+    bool prepareTrainerFiles(PorymapZ::TrainerProject &project);
+    void trainerFilesChanged();
 #endif
 
     QAction *copyAction = nullptr;

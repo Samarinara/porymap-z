@@ -20,6 +20,7 @@ public:
     bool confirmChanges();
     bool saveChanges();
     bool hasUnsavedChanges() const { return m_dirty; }
+    void reloadFromDisk() { scan(); }
 signals:
     void dirtyChanged(bool dirty);
     void sourceSaved(const QString &path);
