@@ -1,6 +1,9 @@
 #include <QtTest>
 #include <QStackedWidget>
 #include <QTabBar>
+#include <QMenu>
+#include <QScrollBar>
+#include <QScrollArea>
 #include <QTemporaryDir>
 #include <QFile>
 #include <QDir>
@@ -34,9 +37,129 @@
 #include "loadingscreen.h"
 #include "playtest.h"
 
+
+#include <execinfo.h>
+#include <cxxabi.h>
+static QHash<QString,int> g_stacks; static int g_props = 0;
+static QtMessageHandler g_prev = nullptr;
+static void probeHandler(QtMsgType t, const QMessageLogContext &c, const QString &m) {
+    if (m.contains("propagateSizeHints")) {
+        ++g_props;
+        void *buf[60]; int n = backtrace(buf, 60); char **syms = backtrace_symbols(buf, n);
+        QStringList frames;
+        for (int i = 2; i < n; ++i) {
+            QString s = syms[i]; int a = s.indexOf('('), b = s.indexOf('+', a);
+            if (a < 0 || b < 0) continue;
+            QByteArray mangled = s.mid(a+1, b-a-1).toLatin1(); int st = 0;
+            char *d = abi::__cxa_demangle(mangled.constData(), nullptr, nullptr, &st);
+            QString name = d ? QString(d) : QString(mangled); free(d);
+            if (name.isEmpty()) continue;
+            name = name.left(name.indexOf('('));
+            frames << name;
+        }
+        free(syms);
+        g_stacks[frames.mid(0, 40).join("\n    <- ")]++;
+        return;
+    }
+    if (g_prev) g_prev(t, c, m);
+}
+
 class MainWindowTest : public QObject {
     Q_OBJECT
 private slots:
+    void dialogProbe() {
+        const auto root = qEnvironmentVariable("PROBE_PROJECT");
+        if (root.isEmpty()) QSKIP("probe");
+        for (int pt : {9, 11}) {
+            QFont f = QApplication::font(); f.setPointSize(pt); QApplication::setFont(f);
+            PorymapZ::TrainerProject project; QString err;
+            QVERIFY2(project.load(root, false, &err), qPrintable(err));
+            PorymapZ::TrainerEventOptions options;
+            options.sprites = {"OBJ_EVENT_GFX_YOUNGSTER"}; options.trainerTypes = {"TRAINER_TYPE_NORMAL"};
+            options.sprite = "OBJ_EVENT_GFX_YOUNGSTER"; options.trainerType = "TRAINER_TYPE_NORMAL";
+            options.replacedScript = "Route102_EventScript_Calvin";
+            PorymapZ::NewTrainerDialog d(&project, "Route102", "data/maps/Route102/scripts.inc", options);
+            d.show(); QApplication::processEvents();
+            qInfo() << pt << "pt NewTrainerDialog hint" << d.sizeHint() << "min" << d.minimumSizeHint() << "size" << d.size();
+            auto *name = d.findChild<QLineEdit *>("trainerName");
+            auto *id = d.findChild<QLineEdit *>("trainerId");
+            for (const QString t : {"M", "MA", "MARLOW", "CALVIN"}) { name->setText(t); QApplication::processEvents(); qInfo() << "  name" << t << "min" << d.minimumSize() << "size" << d.size() << d.findChild<QLabel *>("trainerMessage")->text(); }
+            id->setText("TRAINER_THIS_IS_A_VERY_LONG_ID_THAT_GOES_ON"); emit id->textEdited(id->text()); QApplication::processEvents(); qInfo() << "  long id min" << d.minimumSize() << "size" << d.size() << d.findChild<QLabel *>("trainerMessage")->text();
+            id->setText("bad id!"); emit id->textEdited(id->text()); QApplication::processEvents(); qInfo() << "  bad id min" << d.minimumSize() << "size" << d.size() << d.findChild<QLabel *>("trainerMessage")->text();
+            PorymapZ::TrainerRepairDialog r(&project);
+            r.show(); QApplication::processEvents();
+            qInfo() << pt << "pt Repair hint" << r.sizeHint() << "min" << r.minimumSizeHint() << "size" << r.size();
+        }
+    }
+
+    void layoutProbe() {
+        const auto root = qEnvironmentVariable("PROBE_PROJECT");
+        if (root.isEmpty()) QSKIP("probe");
+        g_prev = qInstallMessageHandler(probeHandler);
+        const auto dumpStacks = qScopeGuard([] { qInstallMessageHandler(g_prev); QList<QPair<int,QString>> v; for (auto it = g_stacks.begin(); it != g_stacks.end(); ++it) v << qMakePair(it.value(), it.key()); std::sort(v.begin(), v.end(), [](auto &a, auto &b){return a.first>b.first;}); fprintf(stderr, "TOTAL %d\n", g_props); for (int i = 0; i < qMin<int>(6, v.size()); ++i) fprintf(stderr, "=== x%d\n    %s\n", v[i].first, qPrintable(v[i].second)); });
+        PorymapLoadingScreen splash; porysplash = &splash;
+        MainWindow window(nullptr);
+        window.initialize();
+        window.show();
+        QTimer watchdog;
+        connect(&watchdog, &QTimer::timeout, &window, [] {
+            auto *modal = QApplication::activeModalWidget();
+            if (auto *box = qobject_cast<QMessageBox *>(modal)) box->accept();
+            for (auto *widget : QApplication::topLevelWidgets()) {
+                auto *dialog = qobject_cast<QDialog *>(widget);
+                if (!dialog || !dialog->isVisible() || dialog->windowTitle() != "Project Configuration") continue;
+                if (auto *game = dialog->findChild<QComboBox *>()) game->setCurrentText("pokeemerald");
+                dialog->accept();
+            }
+        });
+        watchdog.start(500);
+        QVERIFY(window.openProject(root, true));
+        watchdog.stop();
+        QVERIFY(window.userSetMap("Route102"));
+        window.resize(1300, 900);
+        window.ui->mainTabBar->setCurrentIndex(MainTab::Events);
+        window.on_mainTabBar_tabBarClicked(MainTab::Events);
+        QApplication::processEvents();
+        auto mark = [&](const QString &tag) {
+            QApplication::processEvents(); QApplication::processEvents();
+            qInfo().noquote() << "MARK" << tag << "win" << window.size() << "min" << window.minimumSize() << "max" << window.maximumSize();
+        };
+        mark("events-tab");
+        auto *button = window.ui->newEventToolButton;
+        qInfo() << "button before" << button->defaultAction()->text() << button->sizeHint() << "rightpanel min" << window.ui->tabWidget_EventType->parentWidget()->minimumSizeHint();
+        for (const QString name : {"action_CheckTrainerFiles", "action_NewTrainer"}) {
+            QTimer::singleShot(50, &window, [&, name] {
+                auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+                if (!menu) { qInfo() << "no popup"; return; }
+                for (auto *a : menu->actions()) if (a->objectName() == name) menu->setActiveAction(a);
+                QTimer::singleShot(200, &window, [] { if (auto *d = qobject_cast<QDialog *>(QApplication::activeModalWidget())) { qInfo() << "dialog open" << d->objectName(); d->reject(); } });
+                QTest::keyClick(menu, Qt::Key_Return);
+            });
+            button->showMenu();
+            QApplication::processEvents();
+            qInfo() << "after" << name << "button default:" << button->defaultAction()->text() << button->sizeHint() << "rightpanel min" << window.ui->tabWidget_EventType->parentWidget()->minimumSizeHint() << "win min" << window.minimumSize();
+        }
+        return;
+        QList<ObjectEvent *> objects;
+        for (auto *event : window.editor->map->getEvents(Event::Group::Object)) if (auto *o = dynamic_cast<ObjectEvent *>(event)) objects << o;
+        for (int round = 0; round < 2; ++round)
+        for (auto *o : objects) {
+            window.editor->selectMapEvent(o);
+            window.updateSelectedEvents();
+            mark(QString("select %1 %2").arg(o->getScript(), o->getTrainerType()));
+        }
+        auto *frame = qobject_cast<ObjectFrame *>(objects.first()->getEventFrame());
+        window.editor->selectMapEvent(objects.first()); window.updateSelectedEvents(); mark("reselect first");
+        frame->combo_radius_treeid->setCurrentText("0"); mark("sight 0");
+        frame->combo_trainer_type->setCurrentText("TRAINER_TYPE_NORMAL"); mark("type normal");
+        frame->combo_script->setCurrentText("Route102_EventScript_Calvin"); mark("script calvin");
+        frame->combo_script->setCurrentText("NULL"); mark("script null");
+        for (int w : {1000, 1300, 1700, 1300}) { window.resize(w, 900); mark(QString("resize %1").arg(w)); }
+        for (int t : {MainTab::Map, MainTab::Events, MainTab::Dialogue, MainTab::Battle, MainTab::Events}) {
+            window.ui->mainTabBar->setCurrentIndex(t); window.on_mainTabBar_tabBarClicked(t); mark(QString("tab %1").arg(t));
+        }
+    }
+
     void scriptToolbarOpensPopup_data() {
         QTest::addColumn<bool>("poryscriptEnabled");
         QTest::newRow("assembly-project") << false;
